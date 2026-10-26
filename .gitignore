@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+/dist/
+/build/
+*.egg-info/
+
+# Tooling caches and reports
+.ruff_cache/
+.pytest_cache/
+.coverage
+/coverage.xml
+/htmlcov/
+
+# Generated Zuke artifacts, once the build is a Zuke build
+/.zuke/
+
+# Editor / OS noise
+.DS_Store
+*.swp
+
+# Env
+.env

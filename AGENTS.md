@@ -1,0 +1,177 @@
+# AGENTS.md
+
+Guidance for working in this repository. Read this before making changes.
+
+zuke-python is the Python SDK for [Zuke](https://github.com/zuke-build/zuke),
+the code-first, strongly-typed build automation system. A Zuke build written in
+Python is a class whose fields are targets; this package hosts that class as a
+**worker** and runs it on the Zuke **engine**, which stays in the main
+repository.
+
+> This file, `AGENTS.md`, is the single source of truth for both humans and
+> agents. `CLAUDE.md` is a thin pointer whose entire content is `@AGENTS.md`, so
+> Claude Code loads this file and there is exactly one copy to maintain.
+
+## Status and sequencing
+
+The SDK is gated on the engine. The order of work, decided in the main
+repository, is:
+
+1. The engine becomes fully separate: it can host a build another process
+   describes over the worker protocol, and a conformance suite proves it against
+   a fake worker. That work is in the main repository
+   ([phase 0 spike](https://github.com/zuke-build/zuke/issues/901) and its
+   successors).
+2. Then this package gets the authoring surface, the worker loop, and the
+   generated tool facades, and its own build becomes a Zuke build.
+
+Until step 2, this repository is scaffolding: the package exports only its
+version, and the gate runs through a plain GitHub Actions workflow. **Do not
+start the DSL or the worker here before the engine side is ready.**
+
+## How the SDK relates to the engine
+
+- **One engine, thin SDKs.** The engine owns scheduling, retries, timeouts,
+  cancellation, durable run records, resume, locks, caching, services, CI
+  generation, the MCP server, the registry, rendering, redaction, and every tool
+  wrapper. The SDK owns the authoring surface (`Build`, `target()`,
+  `parameter()`, `group()`, `service()`), the manifest it describes, and running
+  a target body when asked.
+- **Every subprocess runs in the engine.** A body calls `ctx.sh(...)`, which is
+  an `exec` request over the socket; the engine spawns it with argv purity,
+  tee and capture, redaction, dry-run, timeout kill and cancel. The worker sends
+  its own environment and working directory in `hello`, and the engine uses
+  them as the base of every spawn, so a `uv run` venv PATH is honoured.
+- **Transport:** newline-delimited JSON-RPC 2.0 over loopback TCP. The engine
+  listens, hands the worker `ZUKE_ENGINE_ADDR`, `ZUKE_ENGINE_TOKEN` and
+  `ZUKE_PROTOCOL`, and accepts exactly one connection. The worker's stdout and
+  stderr go to the engine as log lines, so a stray `print` cannot corrupt the
+  protocol. The worker ignores SIGINT; the engine drives shutdown.
+- **The protocol is defined in the engine repository**, with its conformance
+  transcripts. This repository pins the engine release it was tested against. A
+  protocol change lands in the engine first; the SDK change that uses it pins
+  the engine version that carries it.
+- **Tool facades are generated**, from the engine's `deno doc --json` output,
+  never hand-written here. A new wrapper belongs in the engine repository.
+
+## Tech stack
+
+- **Runtime:** Python 3.12+. The package has **no runtime dependencies**;
+  everything it needs is in the standard library (`socket`, `json`, `asyncio`,
+  `contextvars`). The development tools are in the `dev` dependency group.
+- **Toolchain:** [uv](https://docs.astral.sh/uv/) for environments and the
+  lock, [ruff](https://docs.astral.sh/ruff/) for formatting and linting,
+  [pyright](https://github.com/microsoft/pyright) in strict mode for types,
+  [pytest](https://docs.pytest.org/) with coverage, and
+  [poethepoet](https://poethepoet.natn.io/) only to name the gate's tasks until
+  the build is a Zuke build.
+- **Distribution:** `zuke` on PyPI, versioned by release-please from the
+  squash-merged PR titles, as in the main repository.
+
+## Coding guidelines (non-negotiable)
+
+1. **Strict, strongly-typed Python.** Pyright runs in `strict` mode and must be
+   clean. Never use `Any`, `cast`, or `# type: ignore` in `src/`. Narrow with
+   `isinstance` and `TypeGuard` instead. Every function is annotated (ruff's
+   `ANN` rules enforce it). Protocol types from the socket are untrusted: parse
+   them through guards that name the offending field, never trust a shape.
+2. **The gate must always pass.** `uv run poe ci` runs format check, lint,
+   type-check and tests, the same gate CI runs; it must be green before a
+   commit.
+3. **Keep test coverage at 95%+ (lines and branches) at all times.** Enforced
+   by pytest's `--cov-fail-under`. New code needs new tests in the same change.
+4. **Document every public symbol.** A docstring on every public module, class,
+   function and attribute. Match the density and tone of the existing ones.
+5. **Tests are hermetic and fast.** No network, no reliance on ambient tools.
+   A test that needs a subprocess runs `sys.executable`, which is always
+   present. A test that needs the engine uses a fake engine speaking the
+   protocol over a loopback socket, never a real one; the conformance suite
+   from the engine repository is the contract.
+6. **Public API is task-shaped.** Operations live on the `*Tasks` facades the
+   generator emits and on `ctx`, never as loose module-level helpers. Keep
+   internal helpers unexported (`_name`).
+7. **One domain per file.** The DSL, the manifest, the worker loop, the
+   context, the bootstrap and the facades are separate modules under
+   `src/zuke/`. A single file accreting everything is a smell.
+8. **Every source file starts with the copyright and license header.** All
+   `.py` files, tests and fixtures included, open with:
+
+   ```python
+   # Copyright (c) 2026 the Zuke contributors
+   # SPDX-License-Identifier: MIT
+   ```
+
+   `tests/test_license_headers.py` fails the suite on any file missing it.
+
+9. **No dead code.** Remove unreachable branches, unused helpers and fallbacks
+   whose condition can never fire. Tighten the type instead of guarding a loose
+   one.
+10. **Reuse the helper; never paste a second copy.** A near-copy differing by a
+    constant or a message is a copy-paste: parameterise it. A guard or an
+    escape whose whole value is being applied everywhere has exactly one
+    implementation.
+11. **Configuration is a fluent settings lambda, not an options object**, as in
+    the TypeScript SDK: `target().retry(3).timeout("5m")`, `Docker.build(lambda
+    s: s.tag("app:1"))`. Each setter returns `self`.
+12. **Mirror the engine's vocabulary.** The manifest fields, the RPC method
+    names and the `ctx` surface are named exactly as the engine's protocol
+    names them, so the two repositories can be read side by side.
+
+## Testing
+
+Every change ships tests in the same PR. Two layers:
+
+1. **Unit, `tests/test_*.py`.** One module in isolation, with fakes. The bulk
+   of the coverage.
+2. **Protocol, `tests/protocol/`.** The SDK's worker against a fake engine over
+   a real loopback socket, replaying the conformance transcripts the engine
+   repository publishes. Added once the worker exists.
+
+Name every test module `test_*.py`; pytest discovers nothing else.
+
+## Commands
+
+| Task                       | Command               |
+| -------------------------- | --------------------- |
+| Install the environment    | `uv sync`             |
+| Run tests with coverage    | `uv run poe test`     |
+| Type-check                 | `uv run poe check`    |
+| Format / check formatting  | `uv run poe fmt` / `uv run poe fmt:check` |
+| Lint                       | `uv run poe lint`     |
+| Pre-commit gate, same as CI | `uv run poe ci`      |
+| Regenerate `uv.lock`       | `uv lock`             |
+
+The lock is part of the gate: CI runs `uv sync --locked`, so a change to
+`pyproject.toml` must come with a regenerated `uv.lock` in the same commit.
+
+## Repository layout
+
+```
+pyproject.toml            # package metadata, the dev tools, the gate's tasks, tool config
+uv.lock                   # the locked development environment
+src/zuke/                 # the package (src layout); only __init__.py until the engine is ready
+tests/                    # pytest suite
+.github/workflows/ci.yml  # the gate on ubuntu, macOS and Windows
+.github/ISSUE_TEMPLATE/   # feature, bug and chore templates; blank issues are off
+AGENTS.md                 # this file; CLAUDE.md points here
+```
+
+## Good open-source practices to follow
+
+- **Every change starts with an issue.** Feature, bugfix, documentation,
+  refactor or chore: file it from the templates first, then open the pull
+  request that closes it with `Closes #<n>`. This applies to agent-authored
+  work exactly as to a human's.
+- **PR titles are the release trigger.** The repository squash-merges, and
+  release-please parses only the squashed subject. Title every PR as a
+  Conventional Commit: `feat: …` for a minor bump, `fix: …` for a patch;
+  `docs`, `chore`, `refactor` and `test` never bump.
+- **Keep code snippets out of commit message bodies.** A fragment with
+  parentheses can make release-please drop the commit from the release.
+- **Pin GitHub Actions by commit SHA** with the version in a trailing comment,
+  so Dependabot can bump them. Never a floating tag.
+- **Always read the reviewer comments on every PR**, the AI reviewers included
+  once they run here, and address or answer each finding, quoting its id.
+- **No secrets or machine-specific paths** in the repository or commits.
+- **Update docs with code.** If behaviour changes, update `README.md` and the
+  docstrings in the same PR.
