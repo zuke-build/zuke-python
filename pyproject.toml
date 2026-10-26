@@ -1,0 +1,96 @@
+[project]
+name = "zuke"
+version = "0.0.0"
+description = "Zuke for Python: author your build as typed Python, run it on the Zuke engine."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "the Zuke contributors" }]
+requires-python = ">=3.12"
+dependencies = []
+classifiers = [
+  "Development Status :: 1 - Planning",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Topic :: Software Development :: Build Tools",
+  "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://zuke.build"
+Repository = "https://github.com/zuke-build/zuke-python"
+Engine = "https://github.com/zuke-build/zuke"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/zuke"]
+
+[dependency-groups]
+dev = [
+  "poethepoet>=0.30",
+  "pyright>=1.1.390",
+  "pytest>=8.3",
+  "pytest-cov>=6.0",
+  "ruff>=0.8",
+]
+
+# The gate. `uv run poe ci` is what CI runs, so a green run locally means a
+# green run there. Once the Zuke engine can host a Python worker, this build
+# becomes a Zuke build and these tasks become its targets.
+[tool.poe.tasks]
+fmt = "ruff format ."
+"fmt:check" = "ruff format --check ."
+lint = "ruff check ."
+check = "pyright"
+test = "pytest"
+ci = ["fmt:check", "lint", "check", "test"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+# Every rule set that catches a defect or an untyped surface; the style sets
+# ruff format already settles are left to it.
+select = [
+  "ANN", # every function annotated
+  "B",   # bugbear
+  "C4",  # comprehensions
+  "E",   # pycodestyle errors
+  "F",   # pyflakes
+  "I",   # import order
+  "N",   # naming
+  "PL",  # pylint
+  "RUF", # ruff's own
+  "S",   # bandit: subprocess and input handling
+  "SIM", # simplify
+  "T20", # no stray print
+  "UP",  # modern syntax
+  "W",   # pycodestyle warnings
+]
+ignore = [
+  "PLR2004", # a literal in a comparison is often the clearest spelling
+]
+
+[tool.ruff.lint.per-file-ignores]
+# A test may assert and may run a subprocess by argv.
+"tests/**" = ["S101", "S603"]
+
+[tool.pyright]
+include = ["src", "tests"]
+pythonVersion = "3.12"
+typeCheckingMode = "strict"
+reportMissingTypeStubs = true
+reportUnnecessaryTypeIgnoreComment = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--cov=zuke --cov-branch --cov-report=term-missing --cov-fail-under=95 -q"
+
+[tool.coverage.run]
+source = ["zuke"]

@@ -1,0 +1,54 @@
+name: Feature request
+description: Suggest a new capability, tool wrapper, or improvement.
+title: "feat: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the idea! If you are planning a large change, opening this
+        issue first lets us agree on the direction before you invest the effort.
+
+        Please
+        [search existing issues](https://github.com/zuke-build/zuke-python/issues?q=is%3Aissue)
+        first to avoid duplicates.
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Pre-flight checklist
+      options:
+        - label: I searched existing issues and did not find a duplicate.
+          required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or motivation
+      description: What are you trying to do, and what makes it hard today? Focus on the "why".
+      placeholder: I want to wrap the `foo` CLI as a typed `FooTasks` object so my build doesn't fall back to raw shell.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: >
+        How would you like it to work? Sketches of the public surface are
+        welcome. A new tool wrapper belongs in the engine repository, since the
+        Python facades are generated from it.
+      render: python
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches you weighed, including running the command through `ctx.sh`.
+    validations:
+      required: false
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Links to the tool's CLI docs, related issues, or anything else that helps.
+    validations:
+      required: false
