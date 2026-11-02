@@ -34,6 +34,7 @@ dev = [
   "poethepoet>=0.30",
   "pyright>=1.1.390",
   "pytest>=8.3",
+  "pytest-asyncio>=1.4.1.post1",
   "pytest-cov>=6.0",
   "ruff>=0.8",
 ]
@@ -78,8 +79,8 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-# A test may assert and may run a subprocess by argv.
-"tests/**" = ["S101", "S603"]
+# A test may assert, hold a fake token, and run a subprocess by argv.
+"tests/**" = ["S101", "S105", "S603"]
 
 [tool.pyright]
 include = ["src", "tests"]
@@ -91,6 +92,8 @@ reportUnnecessaryTypeIgnoreComment = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--cov=zuke --cov-branch --cov-report=term-missing --cov-fail-under=95 -q"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 
 [tool.coverage.run]
 source = ["zuke"]

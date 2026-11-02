@@ -11,9 +11,11 @@ locks, the caching, the CI generation, the MCP server and every tool wrapper
 stay in the Zuke **engine**; this package is the thin SDK that describes your
 build to it and runs your target bodies when asked.
 
-> **Status: scaffolding.** The SDK is gated on the engine learning to host a
-> worker written in another language. Until then this package exports only its
-> version. The sequencing is described in
+> **Status: in progress.** The engine hosts a worker in any language since
+> `@zuke/engine` 1.0.0, and this package is growing into the SDK slice by slice
+> under [#3](https://github.com/zuke-build/zuke-python/issues/3). The worker
+> loop is in; the authoring surface is next, and until it lands the package
+> exports only its version. The sequencing is described in
 > [`AGENTS.md`](./AGENTS.md#status-and-sequencing).
 
 ## What it will look like
