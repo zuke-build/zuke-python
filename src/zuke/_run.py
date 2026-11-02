@@ -13,19 +13,22 @@ from zuke._worker import host
 
 
 def run(build: type[Build]) -> None:
-    """Host ``build`` when the engine started this process; otherwise do nothing.
+    """Host ``build`` when the engine started this file; otherwise do nothing.
 
     A build file ends with ``run(MyBuild)``. Started by the engine, the file
-    becomes its worker. Imported, by a test say, the call is a no-op. Run by
-    hand with ``python``, it says how a build is run and exits.
+    becomes its worker. Imported, by a test say, the call is a no-op, even
+    inside a command the engine is running for a body, whose environment still
+    names the engine. Run by hand with ``python``, it says how a build is run
+    and exits.
     """
+    frame = inspect.currentframe()
+    caller = None if frame is None else frame.f_back
+    if caller is None or caller.f_globals.get("__name__") != "__main__":
+        return
     if "ZUKE_ENGINE_ADDR" in os.environ:
         host(build())
         return
-    frame = inspect.currentframe()
-    caller = None if frame is None else frame.f_back
-    if caller is not None and caller.f_globals.get("__name__") == "__main__":
-        raise SystemExit(
-            f"{build.__name__}: a Zuke build runs through the engine, "
-            f"`./zuke <target>`, not `python {sys.argv[0]}`"
-        )
+    raise SystemExit(
+        f"{build.__name__}: a Zuke build runs through the engine, "
+        f"`./zuke <target>`, not `python {sys.argv[0]}`"
+    )

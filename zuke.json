@@ -1,0 +1,5 @@
+{
+  "name": "Zuke",
+  "sdk": { "command": ["uv", "run", "build.py"] },
+  "engine": "1.0.0"
+}
