@@ -14,20 +14,24 @@ repository.
 
 ## Status and sequencing
 
-The SDK is gated on the engine. The order of work, decided in the main
+The SDK was gated on the engine. The order of work, decided in the main
 repository, is:
 
 1. The engine becomes fully separate: it can host a build another process
    describes over the worker protocol, and a conformance suite proves it against
-   a fake worker. That work is in the main repository
-   ([phase 0 spike](https://github.com/zuke-build/zuke/issues/901) and its
-   successors).
+   a fake worker. Done, in the main repository:
+   [phase 0](https://github.com/zuke-build/zuke/issues/901) and
+   [phase 1](https://github.com/zuke-build/zuke/issues/903); `@zuke/engine`
+   1.0.0 speaks protocol v1.
 2. Then this package gets the authoring surface, the worker loop, and the
-   generated tool facades, and its own build becomes a Zuke build.
+   generated tool facades, and its own build becomes a Zuke build. In progress,
+   slice by slice, under
+   [#3](https://github.com/zuke-build/zuke-python/issues/3).
 
-Until step 2, this repository is scaffolding: the package exports only its
-version, and the gate runs through a plain GitHub Actions workflow. **Do not
-start the DSL or the worker here before the engine side is ready.**
+Until the authoring surface lands, the package exports only its version: the
+worker loop (`_rpc.py`, `_worker.py`) is private, and the gate runs through a
+plain GitHub Actions workflow. The tool facades wait on the engine's bridge and
+generator ([zuke#927](https://github.com/zuke-build/zuke/issues/927)).
 
 ## How the SDK relates to the engine
 
@@ -62,7 +66,7 @@ start the DSL or the worker here before the engine side is ready.**
 - **Toolchain:** [uv](https://docs.astral.sh/uv/) for environments and the
   lock, [ruff](https://docs.astral.sh/ruff/) for formatting and linting,
   [pyright](https://github.com/microsoft/pyright) in strict mode for types,
-  [pytest](https://docs.pytest.org/) with coverage, and
+  [pytest](https://docs.pytest.org/) with coverage and pytest-asyncio, and
   [poethepoet](https://poethepoet.natn.io/) only to name the gate's tasks until
   the build is a Zuke build.
 - **Distribution:** `zuke` on PyPI, versioned by release-please from the
@@ -149,7 +153,7 @@ The lock is part of the gate: CI runs `uv sync --locked`, so a change to
 ```
 pyproject.toml            # package metadata, the dev tools, the gate's tasks, tool config
 uv.lock                   # the locked development environment
-src/zuke/                 # the package (src layout); only __init__.py until the engine is ready
+src/zuke/                 # the package (src layout): _rpc.py the peer, _worker.py the loop
 tests/                    # pytest suite
 .github/workflows/ci.yml  # the gate on ubuntu, macOS and Windows
 .github/ISSUE_TEMPLATE/   # feature, bug and chore templates; blank issues are off
