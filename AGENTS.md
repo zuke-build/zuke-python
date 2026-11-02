@@ -28,9 +28,9 @@ repository, is:
    slice by slice, under
    [#3](https://github.com/zuke-build/zuke-python/issues/3).
 
-Until the authoring surface lands, the package exports only its version: the
-worker loop (`_rpc.py`, `_worker.py`) is private, and the gate runs through a
-plain GitHub Actions workflow. The tool facades wait on the engine's bridge and
+The worker loop (`_rpc.py`, `_worker.py`) and the authoring surface (`_dsl.py`,
+`_build.py`, `_run.py`) are in; the body context is next. Until the build is a
+Zuke build, the gate runs through a plain GitHub Actions workflow. The tool facades wait on the engine's bridge and
 generator ([zuke#927](https://github.com/zuke-build/zuke/issues/927)).
 
 ## How the SDK relates to the engine
@@ -153,8 +153,8 @@ The lock is part of the gate: CI runs `uv sync --locked`, so a change to
 ```
 pyproject.toml            # package metadata, the dev tools, the gate's tasks, tool config
 uv.lock                   # the locked development environment
-src/zuke/                 # the package (src layout): _rpc.py the peer, _worker.py the loop
-tests/                    # pytest suite
+src/zuke/                 # the package (src layout): the peer, the worker loop, the authoring surface
+tests/                    # pytest suite; protocol/cases/ are the engine's conformance cases, vendored
 .github/workflows/ci.yml  # the gate on ubuntu, macOS and Windows
 .github/ISSUE_TEMPLATE/   # feature, bug and chore templates; blank issues are off
 AGENTS.md                 # this file; CLAUDE.md points here

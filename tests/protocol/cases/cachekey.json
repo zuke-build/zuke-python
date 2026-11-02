@@ -1,0 +1,25 @@
+{
+  "manifest": {
+    "name": "CacheKey",
+    "targets": [
+      {
+        "name": "keyed",
+        "cacheKey": true,
+        "cacheKey_answer": "k1"
+      }
+    ]
+  },
+  "argv": [
+    "keyed"
+  ],
+  "code": 0,
+  "calls": [
+    "build.configure",
+    "target.cacheKey keyed",
+    "target.run keyed",
+    "run.exit done"
+  ],
+  "configure": {
+    "parameters": {}
+  }
+}

@@ -81,6 +81,10 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 # A test may assert, hold a fake token, and run a subprocess by argv.
 "tests/**" = ["S101", "S105", "S603"]
+# A test runs a build file's last line as if it were the main module, and one
+# defines a build with a forward reference, which is a NameError in a class body.
+"tests/test_run.py" = ["S102"]
+"tests/test_build.py" = ["S102"]
 
 [tool.pyright]
 include = ["src", "tests"]
