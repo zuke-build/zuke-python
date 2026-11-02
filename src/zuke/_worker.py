@@ -4,10 +4,10 @@
 
 The engine starts this process with ``ZUKE_ENGINE_ADDR``, ``ZUKE_ENGINE_TOKEN``
 and ``ZUKE_PROTOCOL`` in its environment and accepts exactly one connection.
-The worker greets it with ``hello``, then answers ``build.describe``,
-``build.configure`` and ``target.run`` until ``run.exit``, or until the
-connection ends without one, which is all a worker sees of an engine that
-died. The engine drives shutdown, so SIGINT is ignored.
+The worker greets it with ``hello``, then answers everything the engine asks
+of a build until ``run.exit``, or until the connection ends without one,
+which is all a worker sees of an engine that died. The engine drives
+shutdown, so SIGINT is ignored.
 """
 
 from __future__ import annotations
@@ -15,10 +15,12 @@ from __future__ import annotations
 import asyncio
 import os
 import signal
-from collections.abc import Awaitable, Mapping
-from dataclasses import dataclass
-from typing import Protocol
+from collections.abc import Mapping
 
+from zuke._awaited import awaited
+from zuke._build import Build
+from zuke._context import Context, ServiceContext
+from zuke._dsl import Service, Target
 from zuke._guard import ProtocolError, boolean, record, string
 from zuke._rpc import CANCELLED, MAX_LINE, Peer, RpcError, is_record
 
@@ -27,34 +29,6 @@ SDK = "zuke-python"
 
 PROTOCOL = 1
 """The protocol version this worker speaks."""
-
-
-@dataclass(frozen=True)
-class RunRequest:
-    """What ``target.run`` asks for."""
-
-    target: str
-    """The target whose body to run."""
-    run_id: str
-    """The run's id, as the run record names it."""
-    dry_run: bool
-    """Whether the run is a ``--dry-run``."""
-
-
-class Hosted(Protocol):
-    """The build a worker hosts: what the loop asks of it."""
-
-    def describe(self) -> object:
-        """The manifest, answered to ``build.describe``."""
-        ...
-
-    def configure(self, parameters: Mapping[str, str | None]) -> None:
-        """Take the resolved parameters, each in its CLI form or ``None`` when unset."""
-        ...
-
-    def run_target(self, request: RunRequest, engine: Peer) -> Awaitable[None]:
-        """Run one target's body; ``engine`` serves the calls it makes."""
-        ...
 
 
 def _parameters(params: object) -> dict[str, str | None]:
@@ -82,7 +56,7 @@ def _required(environ: Mapping[str, str], name: str) -> str:
 class Worker:
     """One connection's worth of serving ``build``."""
 
-    def __init__(self, build: Hosted, peer: Peer) -> None:
+    def __init__(self, build: Build, peer: Peer) -> None:
         """Serve ``build`` over ``peer``."""
         self._build = build
         self._peer = peer
@@ -92,6 +66,18 @@ class Worker:
         peer.on("target.run", self._run)
         peer.on("run.cancel", self._cancel)
         peer.on("run.exit", self._exit)
+        peer.on("target.condition", self._condition)
+        peer.on("target.cacheKey", self._cache_key)
+        peer.on("target.settings", self._settings)
+        peer.on("wait.check", self._wait_check)
+        peer.on("target.validate", self._validate)
+        peer.on("service.start", self._service_start)
+        peer.on("service.ready", self._service_ready)
+        peer.on("service.stop", self._service_stop)
+        peer.on("build.onStart", self._on_start)
+        peer.on("build.onTargetStart", self._on_target_start)
+        peer.on("build.onTargetEnd", self._on_target_end)
+        peer.on("build.onFinish", self._on_finish)
 
     async def _describe(self, _params: object) -> object:
         return self._build.describe()
@@ -100,22 +86,30 @@ class Worker:
         self._build.configure(_parameters(params))
         return None
 
+    def _target(self, params: object, method: str) -> Target:
+        return self._build.target_(string(params, "target", method), method)
+
+    def _service(self, params: object, method: str) -> tuple[Service, ServiceContext]:
+        name = string(params, "target", method)
+        return self._build.service_(name, method), ServiceContext(self._peer, name)
+
     async def _run(self, params: object) -> object:
-        request = RunRequest(
-            target=string(params, "target", "target.run"),
-            run_id=string(params, "runId", "target.run"),
-            dry_run=boolean(params, "dryRun", "target.run"),
+        name = string(params, "target", "target.run")
+        ctx = Context(
+            self._peer,
+            name,
+            string(params, "runId", "target.run"),
+            boolean(params, "dryRun", "target.run"),
         )
-        body = asyncio.get_running_loop().create_task(
-            _settle(self._build.run_target(request, self._peer))
-        )
-        self._running[request.target] = body
+        t = self._build.target_(name, "target.run")
+        body = asyncio.get_running_loop().create_task(t.run_body(ctx))
+        self._running[name] = body
         try:
             await body
         except asyncio.CancelledError:
-            raise RpcError(CANCELLED, f'"{request.target}" was cancelled') from None
+            raise RpcError(CANCELLED, f'"{name}" was cancelled') from None
         finally:
-            self._running.pop(request.target, None)
+            self._running.pop(name, None)
         return None
 
     async def _cancel(self, params: object) -> object:
@@ -128,12 +122,57 @@ class Worker:
         self._peer.close()
         return None
 
+    async def _condition(self, params: object) -> object:
+        return await self._target(params, "target.condition").condition_()
 
-async def _settle(body: Awaitable[None]) -> None:
-    await body
+    async def _cache_key(self, params: object) -> object:
+        return await self._target(params, "target.cacheKey").cache_key_()
+
+    async def _settings(self, params: object) -> object:
+        return self._target(params, "target.settings").settings_()
+
+    async def _wait_check(self, params: object) -> object:
+        return await self._target(params, "wait.check").wait_check_()
+
+    async def _validate(self, params: object) -> object:
+        check = string(params, "check", "target.validate")
+        await self._target(params, "target.validate").validate_(check)
+        return None
+
+    async def _service_start(self, params: object) -> object:
+        s, ctx = self._service(params, "service.start")
+        return {"handle": await s.start_(ctx)}
+
+    async def _service_ready(self, params: object) -> object:
+        s, ctx = self._service(params, "service.ready")
+        return await s.ready_(ctx, string(params, "handle", "service.ready"))
+
+    async def _service_stop(self, params: object) -> object:
+        s, ctx = self._service(params, "service.stop")
+        await s.stop_(ctx, string(params, "handle", "service.stop"))
+        return None
+
+    async def _on_start(self, _params: object) -> object:
+        await awaited(self._build.on_start())
+        return None
+
+    async def _on_target_start(self, params: object) -> object:
+        target = string(params, "target", "build.onTargetStart")
+        await awaited(self._build.on_target_start(target))
+        return None
+
+    async def _on_target_end(self, params: object) -> object:
+        target = string(params, "target", "build.onTargetEnd")
+        status = string(params, "status", "build.onTargetEnd")
+        await awaited(self._build.on_target_end(target, status))
+        return None
+
+    async def _on_finish(self, params: object) -> object:
+        await awaited(self._build.on_finish(boolean(params, "ok", "build.onFinish")))
+        return None
 
 
-async def serve(build: Hosted, environ: Mapping[str, str], cwd: str) -> None:
+async def serve(build: Build, environ: Mapping[str, str], cwd: str) -> None:
     """Connect to the engine in ``environ``, greet it, and serve until the run ends.
 
     Raises :class:`ProtocolError` when the environment is not an engine's, and
@@ -167,7 +206,7 @@ async def serve(build: Hosted, environ: Mapping[str, str], cwd: str) -> None:
         await serving
 
 
-def host(build: Hosted) -> None:
+def host(build: Build) -> None:
     """Run ``build`` as the worker of the engine that started this process."""
     # The engine drives shutdown: a Ctrl-C reaches it too, and it cancels the
     # run, answers the bodies, and stops this process when they have settled.

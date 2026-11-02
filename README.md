@@ -14,9 +14,9 @@ build to it and runs your target bodies when asked.
 > **Status: in progress.** The engine hosts a worker in any language since
 > `@zuke/engine` 1.0.0, and this package is growing into the SDK slice by slice
 > under [#3](https://github.com/zuke-build/zuke-python/issues/3). The worker
-> loop, the authoring surface and the body context are in, so a build runs
-> commands through the engine; hooks, gates and services are next. The
-> sequencing is described in
+> loop, the authoring surface, the body context, the hooks, the gates and the
+> services are in, so a Python build describes everything a TypeScript one does;
+> the conformance replay is next. The sequencing is described in
 > [`AGENTS.md`](./AGENTS.md#status-and-sequencing).
 
 ## What it looks like
@@ -56,7 +56,12 @@ ctx.sh(...)` runs a command through the engine and raises `CommandError` on a
 non-zero code, `ctx.state` and `ctx.state_of(...)` read and write durable state,
 and `ctx.outcome_of`, `ctx.outcomes`, `ctx.summary`, `ctx.secret`, `ctx.log`,
 `ctx.plan` and `ctx.signals` are the rest of what the engine serves a body.
-`zuke.tools` is a later slice.
+A target may declare a `.condition(...)`, a `.cache_key(...)`, a `.lock(...)`, a
+`.waits_for(...)` gate and `.validate_during(...)` checks; `service()` declares
+a service with `start`, `ready` and `stop` phases; a `Build` overrides
+`on_start`, `on_target_start`, `on_target_end` and `on_finish` for hooks; and
+`ci()` fields declare the CI files `zuke generate-ci` renders. `zuke.tools` is
+a later slice.
 
 `./zuke test` then runs the Zuke engine, which starts this file as a worker,
 asks it for the graph, and runs `lint` and `test` with every subprocess spawned

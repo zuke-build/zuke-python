@@ -1,12 +1,13 @@
 # Copyright (c) 2026 the Zuke contributors
 # SPDX-License-Identifier: MIT
-"""The body context: what a target body does, every call served by the engine.
+"""The contexts a body and a service phase are handed, every call served by the engine.
 
 A body never spawns a process or touches the run's state itself. Each method
-here is a request the engine serves inside the body's own scope, so its
+here is a request the engine serves inside the caller's own scope, so its
 dry-run echo, redaction and cancellation apply, and each is named as the
-engine's protocol names it. The engine's answers are untrusted and narrowed
-field by field.
+engine's protocol names it. A service phase gets the smaller context, since
+the engine serves it no body-only call. The engine's answers are untrusted
+and narrowed field by field.
 """
 
 from __future__ import annotations
@@ -32,7 +33,7 @@ class ExecResult:
 
 
 class CommandError(Exception):
-    """A command :meth:`Context.sh` ran exited with a code other than zero."""
+    """A command :meth:`ServiceContext.sh` ran exited with a code other than zero."""
 
     def __init__(self, argv: tuple[str, ...], result: ExecResult) -> None:
         """Name the command and its code."""
@@ -91,21 +92,17 @@ class StateHandle:
         return boolean(answer, "recorded", "state.trySet")
 
 
-class Context:
-    """What a body is handed: the run it is part of, and the engine's services."""
+class ServiceContext:
+    """What a service phase is handed: the engine's services a phase may use."""
 
-    def __init__(self, engine: Peer, target: str, run_id: str, dry_run: bool) -> None:
-        """A context for ``target``'s body in the run ``run_id``."""
+    def __init__(self, engine: Peer, target: str) -> None:
+        """A context for a phase of ``target``."""
         self._engine = engine
         self.target = target
-        """The target whose body this is."""
-        self.run_id = run_id
-        """The run's id, as the run record and ``zuke resume`` name it."""
-        self.dry_run = dry_run
-        """Whether the run is a ``--dry-run``."""
+        """The target whose phase or body this is."""
 
     async def call_(self, method: str, **params: object) -> object:
-        """Ask the engine as this target; an engine-side cancel unwinds the body."""
+        """Ask the engine as this target; an engine-side cancel unwinds the caller."""
         try:
             return await self._engine.request(method, {"target": self.target, **params})
         except RpcError as error:
@@ -143,6 +140,26 @@ class Context:
             raise CommandError(argv, result)
         return result
 
+    async def secret(self, value: str) -> None:
+        """Redact ``value`` from everything the run prints or records from now on."""
+        await self.call_("secret.register", value=value)
+
+    async def log(self, line: str) -> None:
+        """Log a line attributed to this target."""
+        await self.call_("log", line=line)
+
+
+class Context(ServiceContext):
+    """What a body is handed: the run it is part of, and all the engine serves it."""
+
+    def __init__(self, engine: Peer, target: str, run_id: str, dry_run: bool) -> None:
+        """A context for ``target``'s body in the run ``run_id``."""
+        super().__init__(engine, target)
+        self.run_id = run_id
+        """The run's id, as the run record and ``zuke resume`` name it."""
+        self.dry_run = dry_run
+        """Whether the run is a ``--dry-run``."""
+
     @property
     def state(self) -> StateHandle:
         """This target's durable state."""
@@ -167,14 +184,6 @@ class Context:
     async def summary(self, pairs: Mapping[str, str | float]) -> None:
         """Report notes into this target's row of the build summary."""
         await self.call_("summary.report", pairs=dict(pairs))
-
-    async def secret(self, value: str) -> None:
-        """Redact ``value`` from everything the run prints or records from now on."""
-        await self.call_("secret.register", value=value)
-
-    async def log(self, line: str) -> None:
-        """Log a line attributed to this target."""
-        await self.call_("log", line=line)
 
     async def plan(self) -> Plan:
         """The run's plan: the planned targets and each one's dependencies."""

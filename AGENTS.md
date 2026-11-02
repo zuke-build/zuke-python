@@ -29,9 +29,10 @@ repository, is:
    [#3](https://github.com/zuke-build/zuke-python/issues/3).
 
 The worker loop (`_rpc.py`, `_worker.py`), the authoring surface (`_dsl.py`,
-`_build.py`, `_run.py`) and the body context (`_context.py`) are in; hooks,
-gates and services are next. Until the build is a Zuke build, the gate runs
-through a plain GitHub Actions workflow. The tool facades wait on the engine's
+`_build.py`, `_ci.py`, `_settings.py`, `_run.py`), the body and service
+contexts (`_context.py`) and the hooks are in; the conformance replay is next.
+Until the build is a Zuke build, the gate runs through a plain GitHub Actions
+workflow. The tool facades wait on the engine's
 bridge and generator
 ([zuke#927](https://github.com/zuke-build/zuke/issues/927)).
 
@@ -155,7 +156,7 @@ The lock is part of the gate: CI runs `uv sync --locked`, so a change to
 ```
 pyproject.toml            # package metadata, the dev tools, the gate's tasks, tool config
 uv.lock                   # the locked development environment
-src/zuke/                 # the package (src layout): the peer, the worker loop, the authoring surface, the context
+src/zuke/                 # the package (src layout): the peer, the worker loop, the authoring surface, the contexts
 tests/                    # pytest suite; protocol/cases/ are the engine's conformance cases, vendored
 .github/workflows/ci.yml  # the gate on ubuntu, macOS and Windows
 .github/ISSUE_TEMPLATE/   # feature, bug and chore templates; blank issues are off
