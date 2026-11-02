@@ -10,13 +10,14 @@ a worker it starts.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Mapping
-from dataclasses import dataclass, field
+from collections.abc import AsyncGenerator, AsyncIterator
+from contextlib import asynccontextmanager
 
 import pytest
 
+from zuke import Build, Context, ExecResult, parameter, target
 from zuke._rpc import FAILED, MAX_LINE, Peer, RpcError, is_record
-from zuke._worker import RunRequest
+from zuke._worker import serve
 
 TOKEN = "t0k3n"
 
@@ -88,31 +89,48 @@ async def engine() -> AsyncIterator[FakeEngine]:
     await fake.stop()
 
 
-@dataclass
-class Scripted:
-    """A hosted build for the tests: a manifest, a body, and what it was asked."""
+@asynccontextmanager
+async def served(build: Build) -> AsyncGenerator[Peer]:
+    """``build`` served to a fresh fake engine: its peer, with the run ended after."""
+    engine = FakeEngine()
+    await engine.start()
+    serving = asyncio.ensure_future(serve(build, engine.environ, "."))
+    peer = await engine.greeted()
+    try:
+        yield peer
+    finally:
+        await peer.notify("run.exit", {"code": 0, "suspended": False})
+        await asyncio.wait_for(serving, 5)
+        await engine.stop()
 
-    manifest: object = field(default_factory=lambda: {"name": "Fake", "targets": []})
-    configured: dict[str, str | None] | None = None
-    requests: list[RunRequest] = field(default_factory=list[RunRequest])
-    results: list[object] = field(default_factory=list[object])
-    hold: asyncio.Event | None = None
-    """When set, the body waits on it, so a test can cancel it mid-run."""
-    fail: BaseException | None = None
-    """When set, the body raises it."""
 
-    def describe(self) -> object:
-        return self.manifest
+class Script:
+    """A build for the worker's tests: two targets whose bodies record their asks."""
 
-    def configure(self, parameters: Mapping[str, str | None]) -> None:
-        self.configured = dict(parameters)
+    def __init__(self) -> None:
+        self.requests: list[tuple[str, str, bool]] = []
+        """Each body run, as the target, run id and dry-run flag it saw."""
+        self.results: list[ExecResult] = []
+        """What each body's one command came back with."""
+        self.hold: asyncio.Event | None = None
+        """When set, the body waits on it, so a test can cancel it mid-run."""
+        self.fail: BaseException | None = None
+        """When set, the body raises it."""
 
-    async def run_target(self, request: RunRequest, engine: Peer) -> None:
-        self.requests.append(request)
-        if self.hold is not None:
-            await self.hold.wait()
-        if self.fail is not None:
-            raise self.fail
-        self.results.append(
-            await engine.request("exec", {"target": request.target, "argv": ["true"]})
-        )
+        async def body(ctx: Context) -> None:
+            self.requests.append((ctx.target, ctx.run_id, ctx.dry_run))
+            if self.hold is not None:
+                await self.hold.wait()
+            if self.fail is not None:
+                raise self.fail
+            self.results.append(await ctx.sh("true"))
+
+        class Scripted(Build):
+            tag = parameter()
+            token = parameter().secret()
+            lint = target().executes(body)
+            slow = target().executes(body)
+
+        self.tag = Scripted.tag
+        self.token = Scripted.token
+        self.build: Build = Scripted()

@@ -1,6 +1,6 @@
 # Copyright (c) 2026 the Zuke contributors
 # SPDX-License-Identifier: MIT
-"""The authoring surface: targets, parameters and groups as a build's fields.
+"""The authoring surface: targets, services, parameters and groups as a build's fields.
 
 Each builder is fluent, every setter returns the builder, and a hard
 dependency is the sibling field itself, so the type checker sees it and a
@@ -8,55 +8,34 @@ forward reference is a ``NameError`` where it is written. The manifest the
 engine reads is each builder's ``manifest()``: only what differs from the
 engine's defaults is sent, so a bare target is just its name.
 
-The ``name_`` field and ``manifest()`` are how :class:`~zuke.Build` reads a
-field it discovered; a build author never touches them.
+The ``name_`` field, ``manifest()`` and the trailing-underscore answer methods
+are how :class:`~zuke.Build` and the worker read a field; a build author never
+touches them.
 """
 
 from __future__ import annotations
 
-import inspect
-import re
 from collections.abc import Awaitable, Callable
 from typing import Literal, Self
 
-from zuke._context import Context
-
-Duration = str | int
-"""A duration as the engine takes it: ``"5m"``, ``"250ms"`` or milliseconds."""
-
-_DURATION = re.compile(r"^(\d+)(ms|s|m|h|d)$")
-_UNIT_MS = {"ms": 1, "s": 1_000, "m": 60_000, "h": 3_600_000, "d": 86_400_000}
-
-
-def _duration_ms(value: Duration, what: str) -> int:
-    if isinstance(value, int):
-        return value
-    match = _DURATION.match(value)
-    if match is None:
-        raise ValueError(f'{what}: "{value}" is not a duration such as "5m" or "250ms"')
-    return int(match.group(1)) * _UNIT_MS[match.group(2)]
-
+from zuke._awaited import awaited
+from zuke._context import Context, ServiceContext
+from zuke._duration import Duration, duration_ms
+from zuke._field import Field, name_of
+from zuke._guard import ProtocolError
+from zuke._settings import (
+    Check,
+    Configure,
+    LockSettings,
+    ValidateDuringSettings,
+    WaitSettings,
+)
 
 Body = Callable[[Context], Awaitable[None] | None]
 """A target's body: sync or async, given the :class:`Context`."""
 
-
-class Field:
-    """A build field: named after the attribute it is assigned to."""
-
-    def __init__(self) -> None:
-        """Start unnamed; the build class names its fields when it is created."""
-        self.name_: str | None = None
-        """The field's name, once a build class has discovered it."""
-
-    @property
-    def name(self) -> str:
-        """The field's name, which is its name on the command line too."""
-        if self.name_ is None:
-            raise RuntimeError(
-                "a target, parameter or group is named by the Build it is a field of"
-            )
-        return self.name_
+CacheKey = Callable[[], str | Awaitable[str]]
+"""A target's extra cache key, sync or async."""
 
 
 class Target(Field):
@@ -84,6 +63,11 @@ class Target(Field):
         self._requires: list[Parameter] = []
         self._on_cancel: Target | str | None = None
         self._on_failure: Target | str | None = None
+        self._condition: Check | None = None
+        self._cache_key: CacheKey | None = None
+        self._lock: Configure[LockSettings] | None = None
+        self._waits_for: Configure[WaitSettings] | None = None
+        self._validate_during: Configure[ValidateDuringSettings] | None = None
 
     def description(self, text: str) -> Self:
         """The line ``--list`` shows for this target."""
@@ -117,12 +101,12 @@ class Target(Field):
 
     def retry(self, times: int, delay: Duration = 0) -> Self:
         """Run the body up to ``times`` more times after it fails, ``delay`` apart."""
-        self._retry = (times, _duration_ms(delay, "retry"))
+        self._retry = (times, duration_ms(delay, "retry"))
         return self
 
     def timeout(self, limit: Duration) -> Self:
         """Fail an attempt that runs longer than ``limit``."""
-        self._timeout_ms = _duration_ms(limit, "timeout")
+        self._timeout_ms = duration_ms(limit, "timeout")
         return self
 
     def before(self, *targets: Target | str) -> Self:
@@ -175,6 +159,31 @@ class Target(Field):
         self.body_ = body
         return self
 
+    def condition(self, check: Check) -> Self:
+        """Run only when ``check`` answers true, asked just before the target's turn."""
+        self._condition = check
+        return self
+
+    def cache_key(self, key: CacheKey) -> Self:
+        """An extra key the cache fingerprint includes, asked when fingerprinting."""
+        self._cache_key = key
+        return self
+
+    def lock(self, configure: Configure[LockSettings]) -> Self:
+        """Hold a cross-run lock while this target runs; see :class:`LockSettings`."""
+        self._lock = configure
+        return self
+
+    def waits_for(self, configure: Configure[WaitSettings]) -> Self:
+        """Suspend the run here until a trigger fires; see :class:`WaitSettings`."""
+        self._waits_for = configure
+        return self
+
+    def validate_during(self, configure: Configure[ValidateDuringSettings]) -> Self:
+        """Run checks on an interval while the body runs; see ValidateDuringSettings."""
+        self._validate_during = configure
+        return self
+
     def references(self) -> list[tuple[str, Target | str]]:
         """Every target this one names, and the setter that named it, for the build."""
         named: list[tuple[str, Target | str]] = [
@@ -218,12 +227,17 @@ class Target(Field):
             ("triggers", self._triggers),
         ):
             if soft:
-                m[key] = [_name_of(t) for t in soft]
+                m[key] = [name_of(t) for t in soft]
         for key, flag in (
             ("unlisted", self._unlisted),
             ("proceedAfterFailure", self._proceed_after_failure),
             ("always", self._always),
             ("dryRunnable", self._dry_runnable),
+            ("condition", self._condition is not None),
+            ("cacheKey", self._cache_key is not None),
+            ("lock", self._lock is not None),
+            ("waitsFor", self._waits_for is not None),
+            ("validateDuring", self._validate_during is not None),
         ):
             if flag:
                 m[key] = True
@@ -233,11 +247,11 @@ class Target(Field):
             ("timeoutMs", self._timeout_ms),
             (
                 "onCancel",
-                None if self._on_cancel is None else _name_of(self._on_cancel),
+                None if self._on_cancel is None else name_of(self._on_cancel),
             ),
             (
                 "onFailure",
-                None if self._on_failure is None else _name_of(self._on_failure),
+                None if self._on_failure is None else name_of(self._on_failure),
             ),
         )
         m.update({key: value for key, value in optional if value is not None})
@@ -245,15 +259,60 @@ class Target(Field):
 
     async def run_body(self, ctx: Context) -> None:
         """Run the body, if any, awaiting it when it is async."""
-        if self.body_ is None:
-            return
-        result = self.body_(ctx)
-        if inspect.isawaitable(result):
-            await result
+        if self.body_ is not None:
+            await awaited(self.body_(ctx))
 
+    async def condition_(self) -> bool:
+        """Answer ``target.condition``."""
+        if self._condition is None:
+            raise ProtocolError(
+                f'target.condition: "{self.name}" declared no condition'
+            )
+        return await awaited(self._condition())
 
-def _name_of(reference: Target | str) -> str:
-    return reference if isinstance(reference, str) else reference.name
+    async def cache_key_(self) -> str:
+        """Answer ``target.cacheKey``."""
+        if self._cache_key is None:
+            raise ProtocolError(f'target.cacheKey: "{self.name}" declared no cache key')
+        return await awaited(self._cache_key())
+
+    def settings_(self) -> dict[str, object]:
+        """Answer ``target.settings``: the declared sections, evaluated now."""
+        m: dict[str, object] = {}
+        if self._lock is not None:
+            m["lock"] = self._lock(LockSettings()).manifest()
+        if self._waits_for is not None:
+            m["waitsFor"] = self._waits_for(WaitSettings()).manifest()
+        if self._validate_during is not None:
+            m["validateDuring"] = self._validate_during(
+                ValidateDuringSettings()
+            ).manifest()
+        return m
+
+    async def wait_check_(self) -> bool:
+        """Answer ``wait.check``: the ``resume_when`` predicate."""
+        check = (
+            None if self._waits_for is None else self._waits_for(WaitSettings()).check
+        )
+        if check is None:
+            raise ProtocolError(
+                f'wait.check: "{self.name}" declared no resume_when check'
+            )
+        return await awaited(check())
+
+    async def validate_(self, check: str) -> None:
+        """Answer ``target.validate``: run the named check, which raises to fail."""
+        declared = (
+            {}
+            if self._validate_during is None
+            else self._validate_during(ValidateDuringSettings()).checks
+        )
+        validation = declared.get(check)
+        if validation is None:
+            raise ProtocolError(
+                f'target.validate: "{self.name}" declared no check "{check}"'
+            )
+        await awaited(validation())
 
 
 Kind = Literal["string", "number", "boolean"]
@@ -492,3 +551,79 @@ def parameter(description: str = "") -> StringParameter:
 def group(*members: Target) -> Group:
     """A new group of ``members``, to assign to a build field."""
     return Group(members)
+
+
+Start = Callable[[ServiceContext], str | Awaitable[str]]
+"""A service's start phase: answers the handle the other phases get."""
+
+Ready = Callable[[ServiceContext, str], bool | Awaitable[bool]]
+"""A service's readiness probe, given the handle."""
+
+Stop = Callable[[ServiceContext, str], Awaitable[None] | None]
+"""A service's stop phase, given the handle."""
+
+
+class Service(Target):
+    """A target the engine starts before its dependants and stops after them.
+
+    Start one with :func:`service`. Its phases get a :class:`ServiceContext`,
+    which can run commands but has no body-only call.
+    """
+
+    def __init__(self) -> None:
+        """A service with no phases yet."""
+        super().__init__()
+        self._start: Start | None = None
+        self._ready: Ready | None = None
+        self._ready_timeout: Duration | None = None
+        self._stop: Stop | None = None
+
+    def start(self, phase: Start) -> Self:
+        """The start phase; it answers the handle the probe and the stop phase get."""
+        self._start = phase
+        return self
+
+    def ready(self, probe: Ready, timeout: Duration | None = None) -> Self:
+        """The readiness probe, asked until it answers true or ``timeout`` passes."""
+        self._ready = probe
+        self._ready_timeout = timeout
+        return self
+
+    def stop(self, phase: Stop) -> Self:
+        """The stop phase, run once every dependant has settled."""
+        self._stop = phase
+        return self
+
+    def manifest(self) -> dict[str, object]:
+        """The service as the engine's manifest describes it."""
+        m = super().manifest()
+        m["kind"] = "service"
+        if self._ready is not None:
+            m["ready"] = True
+        if self._ready_timeout is not None:
+            m["readyTimeoutMs"] = duration_ms(self._ready_timeout, "ready")
+        return m
+
+    async def start_(self, ctx: ServiceContext) -> str:
+        """Answer ``service.start``."""
+        if self._start is None:
+            raise ProtocolError(f'service.start: "{self.name}" declared no start phase')
+        return await awaited(self._start(ctx))
+
+    async def ready_(self, ctx: ServiceContext, handle: str) -> bool:
+        """Answer ``service.ready``."""
+        if self._ready is None:
+            raise ProtocolError(
+                f'service.ready: "{self.name}" declared no readiness probe'
+            )
+        return await awaited(self._ready(ctx, handle))
+
+    async def stop_(self, ctx: ServiceContext, handle: str) -> None:
+        """Answer ``service.stop``; a service with no stop phase has nothing to do."""
+        if self._stop is not None:
+            await awaited(self._stop(ctx, handle))
+
+
+def service() -> Service:
+    """A new service, to configure fluently and assign to a build field."""
+    return Service()

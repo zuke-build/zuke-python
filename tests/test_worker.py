@@ -12,9 +12,10 @@ from collections.abc import AsyncIterator
 
 import pytest
 
-from conftest import TOKEN, FakeEngine, Scripted
+from conftest import TOKEN, FakeEngine, Script
+from zuke import ExecResult
 from zuke._rpc import CANCELLED, FAILED, Peer, RpcError, is_record
-from zuke._worker import PROTOCOL, SDK, ProtocolError, RunRequest, host, serve
+from zuke._worker import PROTOCOL, SDK, ProtocolError, host, serve
 
 
 async def ok(_params: object) -> object:
@@ -22,12 +23,14 @@ async def ok(_params: object) -> object:
 
 
 class Session:
-    """A worker serving ``build`` against ``engine``, and the engine's peer to it."""
+    """A worker serving ``script``'s build against ``engine``, and the peer to it."""
 
-    def __init__(self, engine: FakeEngine, build: Scripted) -> None:
+    def __init__(self, engine: FakeEngine, script: Script) -> None:
         self.engine = engine
-        self.build = build
-        self.serving = asyncio.ensure_future(serve(build, engine.environ, "/work/dir"))
+        self.script = script
+        self.serving = asyncio.ensure_future(
+            serve(script.build, engine.environ, "/work/dir")
+        )
         self.peer: Peer
 
     async def greeted(self) -> Peer:
@@ -41,7 +44,7 @@ class Session:
 
 @pytest.fixture
 async def session(engine: FakeEngine) -> AsyncIterator[Session]:
-    s = Session(engine, Scripted())
+    s = Session(engine, Script())
     yield s
     if not s.serving.done():
         s.serving.cancel()
@@ -62,14 +65,14 @@ async def test_hello_carries_the_sdk_protocol_token_environment_and_cwd(
 
 async def test_describe_answers_the_builds_manifest(session: Session) -> None:
     peer = await session.greeted()
-    assert await peer.request("build.describe", {}) == {"name": "Fake", "targets": []}
+    assert await peer.request("build.describe", {}) == session.script.build.describe()
 
 
 async def test_configure_hands_the_build_its_parameters(session: Session) -> None:
     peer = await session.greeted()
     params = {"parameters": {"tag": "dev", "token": None}}
     assert await peer.request("build.configure", params) is None
-    assert session.build.configured == {"tag": "dev", "token": None}
+    assert (session.script.tag.value, session.script.token.value) == ("dev", None)
 
 
 @pytest.mark.parametrize(
@@ -93,16 +96,19 @@ async def test_target_run_runs_the_body_which_may_exec_through_the_engine(
     peer = await session.greeted()
     run = {"target": "lint", "runId": "r1", "dryRun": False}
     assert await peer.request("target.run", run) is None
-    assert session.build.requests == [RunRequest("lint", "r1", False)]
-    assert session.build.results == [{"code": 0, "stdout": "", "stderr": ""}]
+    assert session.script.requests == [("lint", "r1", False)]
+    assert session.script.results == [ExecResult(code=0, stdout="", stderr="")]
 
 
 @pytest.mark.parametrize(
     ("params", "field"),
     [
         ({"runId": "r1", "dryRun": True}, '"target" must be a string'),
-        ({"target": "t", "dryRun": True}, '"runId" must be a string'),
-        ({"target": "t", "runId": "r1", "dryRun": "yes"}, '"dryRun" must be a boolean'),
+        ({"target": "lint", "dryRun": True}, '"runId" must be a string'),
+        (
+            {"target": "lint", "runId": "r1", "dryRun": "yes"},
+            '"dryRun" must be a boolean',
+        ),
         ("not an object", '"target" must be a string'),
     ],
 )
@@ -114,10 +120,18 @@ async def test_a_malformed_target_run_is_refused_naming_the_field(
         await peer.request("target.run", params)
 
 
+async def test_an_unknown_target_is_refused_by_name(session: Session) -> None:
+    peer = await session.greeted()
+    with pytest.raises(RpcError, match=r'target\.run: Scripted has no target "nope"'):
+        await peer.request(
+            "target.run", {"target": "nope", "runId": "r", "dryRun": False}
+        )
+
+
 async def test_a_body_that_raises_fails_the_target_with_its_message(
     session: Session,
 ) -> None:
-    session.build.fail = ValueError("the linter found 3 problems")
+    session.script.fail = ValueError("the linter found 3 problems")
     peer = await session.greeted()
     with pytest.raises(RpcError) as caught:
         await peer.request(
@@ -132,11 +146,11 @@ async def test_a_body_that_raises_fails_the_target_with_its_message(
 async def test_run_cancel_cancels_the_body_and_answers_cancelled(
     session: Session,
 ) -> None:
-    session.build.hold = asyncio.Event()
+    session.script.hold = asyncio.Event()
     peer = await session.greeted()
     run = {"target": "slow", "runId": "r", "dryRun": False}
     running = asyncio.ensure_future(peer.request("target.run", run))
-    while not session.build.requests:
+    while not session.script.requests:
         await asyncio.sleep(0.01)
     await peer.notify("run.cancel", {"target": "slow"})
     with pytest.raises(RpcError) as caught:
@@ -147,7 +161,7 @@ async def test_run_cancel_cancels_the_body_and_answers_cancelled(
 async def test_run_cancel_for_a_target_not_running_is_nothing(session: Session) -> None:
     peer = await session.greeted()
     await peer.notify("run.cancel", {"target": "idle"})
-    assert await peer.request("build.describe", {}) == session.build.manifest
+    assert await peer.request("build.describe", {}) == session.script.build.describe()
 
 
 async def test_run_exit_ends_the_loop(session: Session) -> None:
@@ -167,13 +181,13 @@ async def test_the_connection_ending_without_run_exit_ends_the_loop(
 async def test_a_body_in_flight_when_the_engine_dies_fails_and_the_loop_ends(
     session: Session,
 ) -> None:
-    session.build.hold = asyncio.Event()
+    session.script.hold = asyncio.Event()
     peer = await session.greeted()
     run = {"target": "slow", "runId": "r", "dryRun": False}
     asyncio.ensure_future(peer.request("target.run", run)).add_done_callback(
         lambda done: done.exception()
     )
-    while not session.build.requests:
+    while not session.script.requests:
         await asyncio.sleep(0.01)
     peer.close()
     await session.ended()
@@ -182,11 +196,11 @@ async def test_a_body_in_flight_when_the_engine_dies_fails_and_the_loop_ends(
 async def test_a_refused_hello_raises_the_engines_reason(engine: FakeEngine) -> None:
     environ = {**engine.environ, "ZUKE_ENGINE_TOKEN": "wrong"}
     with pytest.raises(RpcError, match="token mismatch"):
-        await asyncio.wait_for(serve(Scripted(), environ, "."), 5)
+        await asyncio.wait_for(serve(Script().build, environ, "."), 5)
 
 
 async def test_an_engine_that_hangs_up_on_hello_raises(engine: FakeEngine) -> None:
-    serving = asyncio.ensure_future(serve(Scripted(), engine.environ, "."))
+    serving = asyncio.ensure_future(serve(Script().build, engine.environ, "."))
     (await engine.connected()).close()
     with pytest.raises(RpcError):  # Closed, or reset with the greeting unread.
         await asyncio.wait_for(serving, 5)
@@ -197,7 +211,7 @@ async def test_another_protocol_version_is_refused_before_connecting() -> None:
     with pytest.raises(
         ProtocolError, match="speaks protocol 1; the engine asked for 2"
     ):
-        await serve(Scripted(), environ, ".")
+        await serve(Script().build, environ, ".")
 
 
 @pytest.mark.parametrize(
@@ -211,7 +225,7 @@ async def test_a_missing_engine_variable_says_how_a_build_is_run(missing: str) -
     }
     del environ[missing]
     with pytest.raises(ProtocolError, match=f"{missing} is not set"):
-        await serve(Scripted(), environ, ".")
+        await serve(Script().build, environ, ".")
 
 
 def test_host_ignores_sigint_and_serves_the_engine_in_the_environment(
@@ -220,7 +234,7 @@ def test_host_ignores_sigint_and_serves_the_engine_in_the_environment(
     before = signal.getsignal(signal.SIGINT)
     environ: dict[str, str] = {}
     listening = threading.Event()
-    build = Scripted()
+    build = Script().build
     seen: list[object] = []
 
     async def engine_side() -> None:
@@ -230,7 +244,7 @@ def test_host_ignores_sigint_and_serves_the_engine_in_the_environment(
         listening.set()
         peer = await engine.greeted()
         seen.append(engine.hello)
-        assert await peer.request("build.describe", {}) == build.manifest
+        assert await peer.request("build.describe", {}) == build.describe()
         await peer.notify("run.exit", {"code": 0, "suspended": False})
         await engine.stop()
 
