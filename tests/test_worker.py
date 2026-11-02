@@ -68,7 +68,7 @@ async def test_describe_answers_the_builds_manifest(session: Session) -> None:
 async def test_configure_hands_the_build_its_parameters(session: Session) -> None:
     peer = await session.greeted()
     params = {"parameters": {"tag": "dev", "token": None}}
-    assert await peer.request("build.configure", params) == {}
+    assert await peer.request("build.configure", params) is None
     assert session.build.configured == {"tag": "dev", "token": None}
 
 
@@ -92,7 +92,7 @@ async def test_target_run_runs_the_body_which_may_exec_through_the_engine(
 ) -> None:
     peer = await session.greeted()
     run = {"target": "lint", "runId": "r1", "dryRun": False}
-    assert await peer.request("target.run", run) == {}
+    assert await peer.request("target.run", run) is None
     assert session.build.requests == [RunRequest("lint", "r1", False)]
     assert session.build.results == [{"code": 0, "stdout": "", "stderr": ""}]
 

@@ -14,8 +14,9 @@ build to it and runs your target bodies when asked.
 > **Status: in progress.** The engine hosts a worker in any language since
 > `@zuke/engine` 1.0.0, and this package is growing into the SDK slice by slice
 > under [#3](https://github.com/zuke-build/zuke-python/issues/3). The worker
-> loop and the authoring surface are in; the body context, so a target can run
-> commands through the engine, is next. The sequencing is described in
+> loop, the authoring surface and the body context are in, so a build runs
+> commands through the engine; hooks, gates and services are next. The
+> sequencing is described in
 > [`AGENTS.md`](./AGENTS.md#status-and-sequencing).
 
 ## What it looks like
@@ -50,8 +51,12 @@ The class and its fields work today: `target()` carries every setting the
 engine schedules by (`depends_on`, `retry`, `timeout`, `before`, `after`,
 `triggers`, `on_failure`, …), `parameter()` has the string, number, boolean and
 list kinds with `.value` resolved by the engine, `group()` names a parallel
-batch, and `run()` makes the file a worker. `ctx.sh` and `zuke.tools` are the
-next slices.
+batch, and `run()` makes the file a worker. A body gets a `ctx`: `await
+ctx.sh(...)` runs a command through the engine and raises `CommandError` on a
+non-zero code, `ctx.state` and `ctx.state_of(...)` read and write durable state,
+and `ctx.outcome_of`, `ctx.outcomes`, `ctx.summary`, `ctx.secret`, `ctx.log`,
+`ctx.plan` and `ctx.signals` are the rest of what the engine serves a body.
+`zuke.tools` is a later slice.
 
 `./zuke test` then runs the Zuke engine, which starts this file as a worker,
 asks it for the graph, and runs `lint` and `test` with every subprocess spawned

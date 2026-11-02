@@ -19,6 +19,7 @@ from collections.abc import Awaitable, Mapping
 from dataclasses import dataclass
 from typing import Protocol
 
+from zuke._guard import ProtocolError, boolean, record, string
 from zuke._rpc import CANCELLED, MAX_LINE, Peer, RpcError, is_record
 
 SDK = "zuke-python"
@@ -56,28 +57,10 @@ class Hosted(Protocol):
         ...
 
 
-class ProtocolError(Exception):
-    """The environment or a request is not protocol v1 as this worker speaks it."""
-
-
-def _string(params: object, field: str, method: str) -> str:
-    if not is_record(params) or not isinstance(value := params.get(field), str):
-        raise ProtocolError(f'{method}: "{field}" must be a string')
-    return value
-
-
-def _boolean(params: object, field: str, method: str) -> bool:
-    if not is_record(params) or not isinstance(value := params.get(field), bool):
-        raise ProtocolError(f'{method}: "{field}" must be a boolean')
-    return value
-
-
 def _parameters(params: object) -> dict[str, str | None]:
     values = params.get("parameters") if is_record(params) else None
-    if not is_record(values):
-        raise ProtocolError('build.configure: "parameters" must be an object')
     parsed: dict[str, str | None] = {}
-    for name, value in values.items():
+    for name, value in record(values, 'build.configure: "parameters"').items():
         if value is not None and not isinstance(value, str):
             raise ProtocolError(
                 f'build.configure: parameter "{name}" must be a string or null'
@@ -119,9 +102,9 @@ class Worker:
 
     async def _run(self, params: object) -> object:
         request = RunRequest(
-            target=_string(params, "target", "target.run"),
-            run_id=_string(params, "runId", "target.run"),
-            dry_run=_boolean(params, "dryRun", "target.run"),
+            target=string(params, "target", "target.run"),
+            run_id=string(params, "runId", "target.run"),
+            dry_run=boolean(params, "dryRun", "target.run"),
         )
         body = asyncio.get_running_loop().create_task(
             _settle(self._build.run_target(request, self._peer))
@@ -136,7 +119,7 @@ class Worker:
         return None
 
     async def _cancel(self, params: object) -> object:
-        body = self._running.get(_string(params, "target", "run.cancel"))
+        body = self._running.get(string(params, "target", "run.cancel"))
         if body is not None:
             body.cancel()
         return None

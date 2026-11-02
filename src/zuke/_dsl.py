@@ -17,8 +17,9 @@ from __future__ import annotations
 import inspect
 import re
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
 from typing import Literal, Self
+
+from zuke._context import Context
 
 Duration = str | int
 """A duration as the engine takes it: ``"5m"``, ``"250ms"`` or milliseconds."""
@@ -34,16 +35,6 @@ def _duration_ms(value: Duration, what: str) -> int:
     if match is None:
         raise ValueError(f'{what}: "{value}" is not a duration such as "5m" or "250ms"')
     return int(match.group(1)) * _UNIT_MS[match.group(2)]
-
-
-@dataclass(frozen=True)
-class Context:
-    """What a body is handed: the run it is part of."""
-
-    run_id: str
-    """The run's id, as the run record and ``zuke resume`` name it."""
-    dry_run: bool
-    """Whether the run is a ``--dry-run``."""
 
 
 Body = Callable[[Context], Awaitable[None] | None]

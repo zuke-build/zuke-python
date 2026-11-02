@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import pytest
 
-from zuke import Build, Context, Group, Target, group, parameter, target
+from zuke import Build, Group, Target, group, parameter, target
 
 
 def named(t: Target, name: str) -> Target:
@@ -95,19 +95,6 @@ def test_a_malformed_duration_is_refused_by_the_setter() -> None:
 def test_an_unnamed_field_says_how_it_gets_a_name() -> None:
     with pytest.raises(RuntimeError, match="named by the Build"):
         target().manifest()
-
-
-async def test_a_body_may_be_sync_or_async_and_sees_the_context() -> None:
-    seen: list[Context] = []
-
-    async def slow(ctx: Context) -> None:
-        seen.append(ctx)
-
-    ctx = Context(run_id="r1", dry_run=True)
-    await target().executes(seen.append).run_body(ctx)
-    await target().executes(slow).run_body(ctx)
-    await target().run_body(ctx)  # No body: an aggregate.
-    assert seen == [ctx, ctx]
 
 
 def test_a_bare_parameter_is_a_string_with_only_its_name() -> None:

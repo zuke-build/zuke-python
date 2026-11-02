@@ -13,11 +13,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import TypeGuard
 
 import pytest
 
 from zuke import Build, Parameter, Target, group, parameter, target
+from zuke._guard import is_list
 from zuke._rpc import is_record
 
 CASES = Path(__file__).parent / "protocol" / "cases"
@@ -69,10 +69,6 @@ def expected(manifest: dict[str, object]) -> dict[str, object]:
         for t in records(manifest["targets"])
     ]
     return clean
-
-
-def is_list(value: object) -> TypeGuard[list[object]]:
-    return isinstance(value, list)
 
 
 def records(value: object) -> list[dict[str, object]]:

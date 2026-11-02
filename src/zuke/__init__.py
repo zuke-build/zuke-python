@@ -9,9 +9,9 @@ worker, asks it for the graph, and runs each target's body when its turn comes.
 """
 
 from zuke._build import Build
+from zuke._context import CommandError, Context, ExecResult, Outcome, Plan, StateHandle
 from zuke._dsl import (
     BooleanParameter,
-    Context,
     Group,
     NumberListParameter,
     NumberParameter,
@@ -31,11 +31,16 @@ __version__ = "0.0.0"
 __all__ = [
     "BooleanParameter",
     "Build",
+    "CommandError",
     "Context",
+    "ExecResult",
     "Group",
     "NumberListParameter",
     "NumberParameter",
+    "Outcome",
     "Parameter",
+    "Plan",
+    "StateHandle",
     "StringListParameter",
     "StringParameter",
     "Target",

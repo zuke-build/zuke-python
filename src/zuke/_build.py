@@ -13,9 +13,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import ClassVar
 
-from zuke._dsl import Context, Duration, Group, Parameter, Target
+from zuke._context import Context
+from zuke._dsl import Duration, Group, Parameter, Target
+from zuke._guard import ProtocolError
 from zuke._rpc import Peer
-from zuke._worker import ProtocolError, RunRequest
+from zuke._worker import RunRequest
 
 
 class Build:
@@ -120,4 +122,6 @@ class Build:
             raise ProtocolError(
                 f'target.run: {type(self).__name__} has no target "{request.target}"'
             )
-        await t.run_body(Context(run_id=request.run_id, dry_run=request.dry_run))
+        await t.run_body(
+            Context(engine, request.target, request.run_id, request.dry_run)
+        )
