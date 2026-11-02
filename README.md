@@ -15,8 +15,9 @@ build to it and runs your target bodies when asked.
 > `@zuke/engine` 1.0.0, and this package is growing into the SDK slice by slice
 > under [#3](https://github.com/zuke-build/zuke-python/issues/3). The worker
 > loop, the authoring surface, the body context, the hooks, the gates and the
-> services are in, and the worker passes every conformance case of
-> `@zuke/engine` 1.0.0; the dogfood build is next. The sequencing is described in
+> services are in, the worker passes every conformance case of `@zuke/engine`
+> 1.0.0, and this repository's own gate runs as a Zuke build on that engine;
+> the tool facades are next. The sequencing is described in
 > [`AGENTS.md`](./AGENTS.md#status-and-sequencing).
 
 ## What it looks like
@@ -74,8 +75,14 @@ and timeouts all handled once, in one place.
 
 ```sh
 uv sync          # the locked environment
-uv run poe ci    # the gate: format check, lint, pyright strict, tests at 95%+
+./zuke ci        # the gate: format check, lint, pyright strict, tests at 95%+
+./zuke --list    # every target of build.py, this repository's own Zuke build
 ```
+
+The gate is itself a Zuke build, `build.py`, run by `@zuke/engine` at the
+version `zuke.json` pins: the launcher bootstraps Deno, the engine starts
+`build.py` as its worker, and every command a target runs goes through the
+engine. `./zuke.ps1` is the launcher on Windows.
 
 See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for the workflow and
 [`AGENTS.md`](./AGENTS.md) for the rules this repository is built by.

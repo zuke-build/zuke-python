@@ -4,24 +4,17 @@ name: CI
     branches:
       - main
   pull_request:
-    types:
-      - opened
-      - synchronize
-      - reopened
-permissions: {}
+    branches:
+      - main
+permissions:
+  contents: read
 concurrency:
   group: "ci-${{ github.ref }}"
   cancel-in-progress: true
 jobs:
-  # The same gate a contributor runs locally with `uv run poe ci`, on the three
-  # operating systems the engine supports. Once the Zuke engine can host a
-  # Python worker, this job becomes `./zuke ci` against a Python build file,
-  # as the main repository does.
   ci:
     name: "Gate (${{ matrix.os }})"
     runs-on: "${{ matrix.os }}"
-    permissions:
-      contents: read
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -31,20 +24,24 @@ jobs:
           - macos-latest
           - windows-latest
     steps:
-      - name: Harden the runner
-        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+      - name: Harden and check out with Zuke
+        uses: zuke-build/zuke@b0832247daa16321be405a10b71c022317d2c5a4 # v1.0.8
         with:
           egress-policy: audit
-      - name: Check out
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
+          persist-credentials: "false"
       - name: Install uv
+        shell: bash
         run: pipx install uv
-        shell: bash
       - name: Sync the locked environment
+        shell: bash
         run: uv sync --locked
-        shell: bash
-      - name: Run the gate
-        run: uv run poe ci
-        shell: bash
+      - name: Run the gate with the bash launcher
+        if: "runner.os != 'Windows'"
+        run: ./zuke ci
+      - name: Run the gate with the PowerShell launcher
+        if: "runner.os == 'Windows'"
+        shell: pwsh
+        run: ./zuke.ps1 ci
+      - name: Check the generated workflow is current
+        if: "runner.os != 'Windows'"
+        run: ./zuke generate-ci --check

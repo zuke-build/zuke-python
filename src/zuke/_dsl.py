@@ -31,8 +31,8 @@ from zuke._settings import (
     WaitSettings,
 )
 
-Body = Callable[[Context], Awaitable[None] | None]
-"""A target's body: sync or async, given the :class:`Context`."""
+Body = Callable[[Context], object]
+"""A target's body, sync or async, given the :class:`Context`; its result is ignored."""
 
 CacheKey = Callable[[], str | Awaitable[str]]
 """A target's extra cache key, sync or async."""
@@ -559,8 +559,8 @@ Start = Callable[[ServiceContext], str | Awaitable[str]]
 Ready = Callable[[ServiceContext, str], bool | Awaitable[bool]]
 """A service's readiness probe, given the handle."""
 
-Stop = Callable[[ServiceContext, str], Awaitable[None] | None]
-"""A service's stop phase, given the handle."""
+Stop = Callable[[ServiceContext, str], object]
+"""A service's stop phase, given the handle; what it returns is ignored."""
 
 
 class Service(Target):

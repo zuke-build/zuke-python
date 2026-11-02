@@ -30,12 +30,10 @@ repository, is:
 
 The worker loop (`_rpc.py`, `_worker.py`), the authoring surface (`_dsl.py`,
 `_build.py`, `_ci.py`, `_settings.py`, `_run.py`), the body and service
-contexts (`_context.py`), the hooks and the conformance replay are in; the
-dogfood build is next.
-Until the build is a Zuke build, the gate runs through a plain GitHub Actions
-workflow. The tool facades wait on the engine's
-bridge and generator
-([zuke#927](https://github.com/zuke-build/zuke/issues/927)).
+contexts (`_context.py`), the hooks and the conformance replay are in, and this
+repository's own gate is a Zuke build (`build.py`) run by `@zuke/engine` at the
+version `zuke.json` pins. The tool facades wait on the engine's bridge and
+generator ([zuke#927](https://github.com/zuke-build/zuke/issues/927)).
 
 ## How the SDK relates to the engine
 
@@ -70,9 +68,9 @@ bridge and generator
 - **Toolchain:** [uv](https://docs.astral.sh/uv/) for environments and the
   lock, [ruff](https://docs.astral.sh/ruff/) for formatting and linting,
   [pyright](https://github.com/microsoft/pyright) in strict mode for types,
-  [pytest](https://docs.pytest.org/) with coverage and pytest-asyncio, and
-  [poethepoet](https://poethepoet.natn.io/) only to name the gate's tasks until
-  the build is a Zuke build.
+  [pytest](https://docs.pytest.org/) with coverage and pytest-asyncio. The
+  gate's targets are `build.py`, a Zuke build the engine runs through the
+  `./zuke` launchers, which bootstrap Deno themselves.
 - **Distribution:** `zuke` on PyPI, versioned by release-please from the
   squash-merged PR titles, as in the main repository.
 
@@ -83,7 +81,7 @@ bridge and generator
    `isinstance` and `TypeGuard` instead. Every function is annotated (ruff's
    `ANN` rules enforce it). Protocol types from the socket are untrusted: parse
    them through guards that name the offending field, never trust a shape.
-2. **The gate must always pass.** `uv run poe ci` runs format check, lint,
+2. **The gate must always pass.** `./zuke ci` runs format check, lint,
    type-check and tests, the same gate CI runs; it must be green before a
    commit.
 3. **Keep test coverage at 95%+ (lines and branches) at all times.** Enforced
@@ -136,36 +134,45 @@ Every change ships tests in the same PR. Two layers:
    replaying every conformance case vendored under `tests/protocol/cases/` from
    the engine release `VERSION` names: the case's calls in order, its scripted
    answers, a worker that crashes mid-body, and an engine that dies. The
-   cases are refreshed from the engine repository at a tag by the build's
-   `vendorCases` target once the build is a Zuke build; until then, by
-   `git archive <tag> packages/engine/conformance` in an engine checkout,
-   extracted over `cases/`, with the tag written to `VERSION`.
+   build's `vendor_cases` target refreshes the cases from an engine checkout
+   at a tag and records the tag in `VERSION`.
 
 Name every test module `test_*.py`; pytest discovers nothing else.
 
 ## Commands
 
-| Task                       | Command               |
-| -------------------------- | --------------------- |
-| Install the environment    | `uv sync`             |
-| Run tests with coverage    | `uv run poe test`     |
-| Type-check                 | `uv run poe check`    |
-| Format / check formatting  | `uv run poe fmt` / `uv run poe fmt:check` |
-| Lint                       | `uv run poe lint`     |
-| Pre-commit gate, same as CI | `uv run poe ci`      |
-| Regenerate `uv.lock`       | `uv lock`             |
+| Task                        | Command                                                    |
+| --------------------------- | ---------------------------------------------------------- |
+| Install the environment     | `uv sync`                                                  |
+| List the targets            | `./zuke --list`                                            |
+| Run tests with coverage     | `./zuke test`                                              |
+| Type-check                  | `./zuke check`                                             |
+| Format / check formatting   | `./zuke fmt` / `./zuke fmt_check`                          |
+| Lint                        | `./zuke lint`                                              |
+| Pre-commit gate, same as CI | `./zuke ci`                                                |
+| Regenerate the CI workflow  | `./zuke generate-ci` (`--check` verifies it is current)    |
+| Vendor the conformance cases | `./zuke vendor_cases --engine-repo <checkout> --engine-tag <tag>` |
+| Regenerate `uv.lock`        | `uv lock`                                                  |
 
-The lock is part of the gate: CI runs `uv sync --locked`, so a change to
-`pyproject.toml` must come with a regenerated `uv.lock` in the same commit.
+`./zuke` (`./zuke.ps1` on Windows) runs `@zuke/engine` at the version
+`zuke.json` pins, which starts `build.py` as its worker; every command a target
+runs goes through the engine. The lock is part of the gate: CI runs
+`uv sync --locked`, so a change to `pyproject.toml` must come with a
+regenerated `uv.lock` in the same commit. `.github/workflows/ci.yml` is
+generated from `build.py`'s `ci_workflow` field: edit the field, run
+`./zuke generate-ci`, and commit both.
 
 ## Repository layout
 
 ```
-pyproject.toml            # package metadata, the dev tools, the gate's tasks, tool config
+build.py                  # this repository's Zuke build: the gate, the case vendoring, the CI workflow
+zuke.json                 # names the worker command and the @zuke/engine version the launchers run
+zuke, zuke.ps1            # the bootstrap launchers, copied from the engine repository
+pyproject.toml            # package metadata, the dev tools, tool config
 uv.lock                   # the locked development environment
 src/zuke/                 # the package (src layout): the peer, the worker loop, the authoring surface, the contexts
 tests/                    # pytest suite; protocol/ replays the engine's conformance cases, vendored under cases/
-.github/workflows/ci.yml  # the gate on ubuntu, macOS and Windows
+.github/workflows/ci.yml  # the gate on ubuntu, macOS and Windows, generated from build.py
 .github/ISSUE_TEMPLATE/   # feature, bug and chore templates; blank issues are off
 AGENTS.md                 # this file; CLAUDE.md points here
 ```

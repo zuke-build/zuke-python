@@ -31,24 +31,12 @@ packages = ["src/zuke"]
 
 [dependency-groups]
 dev = [
-  "poethepoet>=0.30",
   "pyright>=1.1.390",
   "pytest>=8.3",
   "pytest-asyncio>=1.4.1.post1",
   "pytest-cov>=6.0",
   "ruff>=0.8",
 ]
-
-# The gate. `uv run poe ci` is what CI runs, so a green run locally means a
-# green run there. Once the Zuke engine can host a Python worker, this build
-# becomes a Zuke build and these tasks become its targets.
-[tool.poe.tasks]
-fmt = "ruff format ."
-"fmt:check" = "ruff format --check ."
-lint = "ruff check ."
-check = "pyright"
-test = "pytest"
-ci = ["fmt:check", "lint", "check", "test"]
 
 [tool.ruff]
 target-version = "py312"
@@ -87,8 +75,8 @@ ignore = [
 "tests/test_build.py" = ["S102"]
 
 [tool.pyright]
-include = ["src", "tests"]
-extraPaths = ["tests"]
+include = ["src", "tests", "build.py"]
+extraPaths = ["tests", "."]
 pythonVersion = "3.12"
 typeCheckingMode = "strict"
 reportMissingTypeStubs = true
@@ -96,6 +84,7 @@ reportUnnecessaryTypeIgnoreComment = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 addopts = "--cov=zuke --cov-branch --cov-report=term-missing --cov-fail-under=95 -q"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
