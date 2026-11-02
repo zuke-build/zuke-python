@@ -14,8 +14,9 @@ import pytest
 
 from conftest import TOKEN, FakeEngine, Script
 from zuke import ExecResult
+from zuke._guard import ProtocolError
 from zuke._rpc import CANCELLED, FAILED, Peer, RpcError, is_record
-from zuke._worker import PROTOCOL, SDK, ProtocolError, host, serve
+from zuke._worker import PROTOCOL, SDK, host, serve
 
 
 async def ok(_params: object) -> object:

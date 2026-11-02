@@ -10,7 +10,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 HEADER = "# Copyright (c) 2026 the Zuke contributors\n# SPDX-License-Identifier: MIT\n"
-ROOTS = ("src", "tests")
+ROOTS = ("src", "tests", "scripts")
 
 
 def python_files() -> list[Path]:

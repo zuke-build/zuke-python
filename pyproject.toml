@@ -85,9 +85,12 @@ ignore = [
 # defines a build with a forward reference, which is a NameError in a class body.
 "tests/test_run.py" = ["S102"]
 "tests/test_build.py" = ["S102"]
+# The vendoring script runs git by name, as a developer would.
+"scripts/**" = ["S603", "S607"]
 
 [tool.pyright]
-include = ["src", "tests"]
+include = ["src", "tests", "scripts"]
+extraPaths = ["tests"]
 pythonVersion = "3.12"
 typeCheckingMode = "strict"
 reportMissingTypeStubs = true

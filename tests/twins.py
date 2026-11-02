@@ -11,12 +11,15 @@ the twin must describe.
 
 from __future__ import annotations
 
+import asyncio
 import json
+import os
 from pathlib import Path
 
 from zuke import (
     Build,
     Ci,
+    Context,
     LockSettings,
     Parameter,
     Service,
@@ -29,7 +32,9 @@ from zuke import (
     service,
     target,
 )
+from zuke._dsl import Body
 from zuke._guard import is_list
+from zuke._guard import strings as field_strings
 from zuke._rpc import is_record
 from zuke._settings import Configure
 
@@ -150,7 +155,76 @@ def twin_target(
         b = b.always()
     if t.get("dryRunnable") is True:
         b = b.dry_runnable()
+    if not SCRIPT_KEYS.isdisjoint(t):
+        b = b.executes(twin_body(t))
     return twin_links(twin_gates(b, t), t, earlier, parameters)
+
+
+def twin_body(t: dict[str, object]) -> Body:
+    """The body the case scripts: its calls, then its failure, crash or success."""
+    calls = records(t.get("calls", []))
+    fail, fail_times = t.get("fail"), t.get("failTimes", 0)
+    sleep_ms, crash = t.get("sleep_ms", 0), t.get("crash_exit")
+    assert isinstance(fail_times, int) and isinstance(sleep_ms, int)
+    attempts = 0
+
+    async def body(ctx: Context) -> None:
+        nonlocal attempts
+        if sleep_ms:
+            await asyncio.sleep(sleep_ms / 1000)
+        for call in calls:
+            await twin_call(ctx, str(call.get("method")), call.get("params"))
+        if isinstance(crash, int):
+            os._exit(crash)  # The worker process dies mid-body, as the case scripts.
+        attempts += 1
+        if attempts <= fail_times:
+            raise RuntimeError(f"attempt {attempts} of {ctx.target} failed")
+        if isinstance(fail, str):
+            raise RuntimeError(fail)
+
+    return body
+
+
+async def twin_call(ctx: Context, method: str, params: object) -> None:
+    """One scripted call a body makes, through the context method named for it."""
+    p = params if is_record(params) else {}
+    of = p.get("of")
+    state = ctx.state if not isinstance(of, str) else ctx.state_of(of)
+    patch = p.get("patch")
+    if method == "state.set":
+        await state.set(patch if is_record(patch) else {})
+    elif method == "state.get":
+        await state.get()
+    elif method == "state.trySet":
+        await state.try_set(patch if is_record(patch) else {})
+    elif method == "summary.report":
+        pairs = p.get("pairs")
+        await ctx.summary(summary_pairs(pairs if is_record(pairs) else {}))
+    elif method == "plan":
+        await ctx.plan()
+    elif method == "signals":
+        await ctx.signals()
+    elif method == "log":
+        await ctx.log(str(p.get("line")))
+    elif method == "outcome.of":
+        await ctx.outcome_of(str(of))
+    elif method == "outcomes":
+        await ctx.outcomes()
+    elif method == "secret.register":
+        await ctx.secret(str(p.get("value")))
+    elif method == "exec":
+        await ctx.sh(*field_strings(p, "argv", "exec"))
+    else:
+        raise ValueError(f"the twin has no call for {method}")
+
+
+def summary_pairs(pairs: dict[str, object]) -> dict[str, str | float]:
+    out: dict[str, str | float] = {}
+    for label, value in pairs.items():
+        if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+            raise TypeError(f"summary.report: {label} must be a string or number")
+        out[label] = value
+    return out
 
 
 def twin_gates(b: Target, t: dict[str, object]) -> Target:
