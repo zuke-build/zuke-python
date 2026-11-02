@@ -80,11 +80,9 @@ async def test_a_request_is_answered_with_the_handlers_result(pair: Pair) -> Non
     assert await pair.client.request("echo", {"n": 1}) == {"echoed": {"n": 1}}
 
 
-async def test_a_handler_with_nothing_to_say_answers_an_empty_object(
-    pair: Pair,
-) -> None:
+async def test_a_handler_with_nothing_to_say_answers_null(pair: Pair) -> None:
     pair.server.on("ping", nothing)
-    assert await pair.client.request("ping", {}) == {}
+    assert await pair.client.request("ping", {}) is None
 
 
 async def test_both_sides_request_each_other(pair: Pair) -> None:

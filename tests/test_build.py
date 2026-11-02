@@ -10,7 +10,7 @@ import pytest
 
 from conftest import FakeEngine
 from twins import records
-from zuke import Build, Context, group, parameter, target
+from zuke import Build, group, parameter, target
 from zuke._rpc import RpcError
 from zuke._worker import serve
 
@@ -130,13 +130,15 @@ def test_a_group_member_and_an_unforceable_target_must_be_fields() -> None:
 
 
 async def test_the_worker_serves_a_build_end_to_end(engine: FakeEngine) -> None:
-    seen: list[tuple[str | None, float | None, Context]] = []
+    seen: list[tuple[str | None, float | None, str, str, bool]] = []
 
     class App(Build):
         tag = parameter().default("dev")
         count = parameter().number()
         show = target().executes(
-            lambda ctx: seen.append((App.tag.value, App.count.value, ctx))
+            lambda ctx: seen.append(
+                (App.tag.value, App.count.value, ctx.target, ctx.run_id, ctx.dry_run)
+            )
         )
 
     serving = asyncio.ensure_future(serve(App(), engine.environ, "."))
@@ -144,9 +146,9 @@ async def test_the_worker_serves_a_build_end_to_end(engine: FakeEngine) -> None:
     assert await peer.request("build.describe", {}) == App().describe()
     await peer.request("build.configure", {"parameters": {"tag": "v1", "count": "3"}})
     run = {"target": "show", "runId": "r1", "dryRun": True}
-    assert await peer.request("target.run", run) == {}
+    assert await peer.request("target.run", run) is None
     with pytest.raises(RpcError, match=r'target\.run: App has no target "nope"'):
         await peer.request("target.run", {**run, "target": "nope"})
     await peer.notify("run.exit", {"code": 0, "suspended": False})
     await asyncio.wait_for(serving, 5)
-    assert seen == [("v1", 3, Context(run_id="r1", dry_run=True))]
+    assert seen == [("v1", 3, "show", "r1", True)]

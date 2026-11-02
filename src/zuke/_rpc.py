@@ -171,12 +171,11 @@ class Peer:
                 await self._fail(request_id, FAILED, str(error))
             return
         if answer:
-            # A handler with nothing to say answers ``{}``, as the engine does.
             await self._send(
                 {
                     "jsonrpc": "2.0",
                     "id": request_id,
-                    "result": {} if result is None else result,
+                    "result": result,
                 }
             )
 
