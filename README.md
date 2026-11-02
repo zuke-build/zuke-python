@@ -15,8 +15,8 @@ build to it and runs your target bodies when asked.
 > `@zuke/engine` 1.0.0, and this package is growing into the SDK slice by slice
 > under [#3](https://github.com/zuke-build/zuke-python/issues/3). The worker
 > loop, the authoring surface, the body context, the hooks, the gates and the
-> services are in, so a Python build describes everything a TypeScript one does;
-> the conformance replay is next. The sequencing is described in
+> services are in, and the worker passes every conformance case of
+> `@zuke/engine` 1.0.0; the dogfood build is next. The sequencing is described in
 > [`AGENTS.md`](./AGENTS.md#status-and-sequencing).
 
 ## What it looks like

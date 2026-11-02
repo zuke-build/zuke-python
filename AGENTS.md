@@ -30,7 +30,8 @@ repository, is:
 
 The worker loop (`_rpc.py`, `_worker.py`), the authoring surface (`_dsl.py`,
 `_build.py`, `_ci.py`, `_settings.py`, `_run.py`), the body and service
-contexts (`_context.py`) and the hooks are in; the conformance replay is next.
+contexts (`_context.py`), the hooks and the conformance replay are in; the
+dogfood build is next.
 Until the build is a Zuke build, the gate runs through a plain GitHub Actions
 workflow. The tool facades wait on the engine's
 bridge and generator
@@ -130,9 +131,15 @@ Every change ships tests in the same PR. Two layers:
 
 1. **Unit, `tests/test_*.py`.** One module in isolation, with fakes. The bulk
    of the coverage.
-2. **Protocol, `tests/protocol/`.** The SDK's worker against a fake engine over
-   a real loopback socket, replaying the conformance transcripts the engine
-   repository publishes. Added once the worker exists.
+2. **Protocol, `tests/protocol/`.** The SDK's worker, started as the process
+   the engine would start, against a fake engine over a real loopback socket,
+   replaying every conformance case vendored under `tests/protocol/cases/` from
+   the engine release `VERSION` names: the case's calls in order, its scripted
+   answers, a worker that crashes mid-body, and an engine that dies. The
+   cases are refreshed from the engine repository at a tag by the build's
+   `vendorCases` target once the build is a Zuke build; until then, by
+   `git archive <tag> packages/engine/conformance` in an engine checkout,
+   extracted over `cases/`, with the tag written to `VERSION`.
 
 Name every test module `test_*.py`; pytest discovers nothing else.
 
@@ -157,7 +164,7 @@ The lock is part of the gate: CI runs `uv sync --locked`, so a change to
 pyproject.toml            # package metadata, the dev tools, the gate's tasks, tool config
 uv.lock                   # the locked development environment
 src/zuke/                 # the package (src layout): the peer, the worker loop, the authoring surface, the contexts
-tests/                    # pytest suite; protocol/cases/ are the engine's conformance cases, vendored
+tests/                    # pytest suite; protocol/ replays the engine's conformance cases, vendored under cases/
 .github/workflows/ci.yml  # the gate on ubuntu, macOS and Windows
 .github/ISSUE_TEMPLATE/   # feature, bug and chore templates; blank issues are off
 AGENTS.md                 # this file; CLAUDE.md points here

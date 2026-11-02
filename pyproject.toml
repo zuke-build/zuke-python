@@ -88,6 +88,7 @@ ignore = [
 
 [tool.pyright]
 include = ["src", "tests"]
+extraPaths = ["tests"]
 pythonVersion = "3.12"
 typeCheckingMode = "strict"
 reportMissingTypeStubs = true
