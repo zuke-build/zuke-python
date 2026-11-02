@@ -43,9 +43,6 @@ def test_the_manifest_flags_the_hooks_a_build_overrides() -> None:
         "onFinish": True,
     }
     assert Finishing().describe()["hooks"] == {"onFinish": True}
-    assert (
-        "hooks" not in Build().describe() if False else True
-    )  # Build itself is not a build.
 
 
 def test_a_build_without_overrides_declares_no_hooks() -> None:
@@ -84,6 +81,18 @@ async def test_a_malformed_hook_call_is_refused_naming_the_field(
     async with served(Hooked()) as peer:
         with pytest.raises(RpcError, match=message):
             await peer.request(method, params)
+
+
+async def test_a_hook_the_build_does_not_override_does_nothing_when_called() -> None:
+    class Plain(Build):
+        lint = target()
+
+    async with served(Plain()) as peer:
+        assert await peer.request("build.onStart", {}) is None
+        assert await peer.request("build.onTargetStart", {"target": "lint"}) is None
+        end = {"target": "lint", "status": "failed"}
+        assert await peer.request("build.onTargetEnd", end) is None
+        assert await peer.request("build.onFinish", {"ok": False}) is None
 
 
 async def test_a_hook_that_raises_fails_the_call_with_its_message() -> None:
