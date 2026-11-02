@@ -10,7 +10,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 HEADER = "# Copyright (c) 2026 the Zuke contributors\n# SPDX-License-Identifier: MIT\n"
-ROOTS = ("src", "tests", "scripts")
+ROOTS = ("src", "tests")
 
 
 def python_files() -> list[Path]:
@@ -20,13 +20,9 @@ def python_files() -> list[Path]:
 def test_every_source_file_carries_the_header() -> None:
     files = python_files()
     assert files, "no Python files found: the roots moved"
-    missing = [str(path.relative_to(ROOT)) for path in files if not headed(path)]
+    missing = [
+        str(path.relative_to(ROOT))
+        for path in files
+        if not path.read_text(encoding="utf-8").startswith(HEADER)
+    ]
     assert missing == []
-
-
-def headed(path: Path) -> bool:
-    """Whether the file opens with the header, after a shebang where one exists."""
-    text = path.read_text(encoding="utf-8")
-    if text.startswith("#!"):
-        text = text.partition("\n")[2]
-    return text.startswith(HEADER)

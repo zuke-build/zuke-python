@@ -135,9 +135,11 @@ Every change ships tests in the same PR. Two layers:
    the engine would start, against a fake engine over a real loopback socket,
    replaying every conformance case vendored under `tests/protocol/cases/` from
    the engine release `VERSION` names: the case's calls in order, its scripted
-   answers, a worker that crashes mid-body, and an engine that dies.
-   `scripts/vendor_cases.py` refreshes the cases from a checkout of the engine
-   repository at a tag.
+   answers, a worker that crashes mid-body, and an engine that dies. The
+   cases are refreshed from the engine repository at a tag by the build's
+   `vendorCases` target once the build is a Zuke build; until then, by
+   `git archive <tag> packages/engine/conformance` in an engine checkout,
+   extracted over `cases/`, with the tag written to `VERSION`.
 
 Name every test module `test_*.py`; pytest discovers nothing else.
 
@@ -163,7 +165,6 @@ pyproject.toml            # package metadata, the dev tools, the gate's tasks, t
 uv.lock                   # the locked development environment
 src/zuke/                 # the package (src layout): the peer, the worker loop, the authoring surface, the contexts
 tests/                    # pytest suite; protocol/ replays the engine's conformance cases, vendored under cases/
-scripts/                  # vendor_cases.py refreshes those cases from an engine checkout at a tag
 .github/workflows/ci.yml  # the gate on ubuntu, macOS and Windows
 .github/ISSUE_TEMPLATE/   # feature, bug and chore templates; blank issues are off
 AGENTS.md                 # this file; CLAUDE.md points here
