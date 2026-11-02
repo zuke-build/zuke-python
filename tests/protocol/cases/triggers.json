@@ -1,0 +1,29 @@
+{
+  "manifest": {
+    "name": "Triggers",
+    "targets": [
+      {
+        "name": "smoke"
+      },
+      {
+        "name": "deploy",
+        "triggers": [
+          "smoke"
+        ]
+      }
+    ]
+  },
+  "argv": [
+    "deploy"
+  ],
+  "code": 0,
+  "calls": [
+    "build.configure",
+    "target.run deploy",
+    "target.run smoke",
+    "run.exit done"
+  ],
+  "configure": {
+    "parameters": {}
+  }
+}

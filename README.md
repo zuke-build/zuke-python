@@ -14,11 +14,11 @@ build to it and runs your target bodies when asked.
 > **Status: in progress.** The engine hosts a worker in any language since
 > `@zuke/engine` 1.0.0, and this package is growing into the SDK slice by slice
 > under [#3](https://github.com/zuke-build/zuke-python/issues/3). The worker
-> loop is in; the authoring surface is next, and until it lands the package
-> exports only its version. The sequencing is described in
+> loop and the authoring surface are in; the body context, so a target can run
+> commands through the engine, is next. The sequencing is described in
 > [`AGENTS.md`](./AGENTS.md#status-and-sequencing).
 
-## What it will look like
+## What it looks like
 
 ```python
 from zuke import Build, parameter, run, target
@@ -45,6 +45,13 @@ class CI(Build):
 
 run(CI)
 ```
+
+The class and its fields work today: `target()` carries every setting the
+engine schedules by (`depends_on`, `retry`, `timeout`, `before`, `after`,
+`triggers`, `on_failure`, …), `parameter()` has the string, number, boolean and
+list kinds with `.value` resolved by the engine, `group()` names a parallel
+batch, and `run()` makes the file a worker. `ctx.sh` and `zuke.tools` are the
+next slices.
 
 `./zuke test` then runs the Zuke engine, which starts this file as a worker,
 asks it for the graph, and runs `lint` and `test` with every subprocess spawned
