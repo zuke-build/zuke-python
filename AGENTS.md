@@ -30,9 +30,10 @@ repository, is:
 
 The worker loop (`_rpc.py`, `_worker.py`), the authoring surface (`_dsl.py`,
 `_build.py`, `_run.py`) and the body context (`_context.py`) are in; hooks,
-gates and services are next. Until the build is a
-Zuke build, the gate runs through a plain GitHub Actions workflow. The tool facades wait on the engine's bridge and
-generator ([zuke#927](https://github.com/zuke-build/zuke/issues/927)).
+gates and services are next. Until the build is a Zuke build, the gate runs
+through a plain GitHub Actions workflow. The tool facades wait on the engine's
+bridge and generator
+([zuke#927](https://github.com/zuke-build/zuke/issues/927)).
 
 ## How the SDK relates to the engine
 
