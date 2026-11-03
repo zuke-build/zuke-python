@@ -31,6 +31,7 @@ def test_the_gate_depends_on_every_check() -> None:
         "review_base",
         "review",
         "review_preflight",
+        "publish",
         "vendor_cases",
         "vendor_spec",
     ]
@@ -42,7 +43,7 @@ def test_the_gate_depends_on_every_check() -> None:
         "facades_check",
     ]
     assert Zuke.vendor_cases.manifest()["requires"] == ["engine_repo", "engine_tag"]
-    assert is_list(manifest["ci"]) and len(manifest["ci"]) == 2
+    assert is_list(manifest["ci"]) and len(manifest["ci"]) == 3
     assert Zuke.review.manifest()["dependsOn"] == ["review_base"]
 
 
@@ -210,6 +211,48 @@ def test_the_ai_review_workflow_runs_on_pull_requests_and_on_command() -> None:
         "uv sync --locked",
         "./zuke review_preflight",
         "./zuke review",
+    ]
+
+
+def test_the_release_workflow_publishes_a_cut_release_from_main() -> None:
+    declared = Zuke.release_workflow.manifest()
+    assert declared["path"] == ".github/workflows/release.yml"
+    pipeline = declared["pipeline"]
+    assert isinstance(pipeline, dict)
+    assert pipeline["triggers"] == {"push": ["main"]}
+    invokes = declared["invokes"]
+    assert is_list(invokes) and len(invokes) == 1
+    (job,) = invokes
+    assert is_record(job) and job["target"] == "publish"
+    assert job["environment"] == "pypi"
+    assert is_record(job["permissions"]) and job["permissions"]["id-token"] == "write"
+    steps = job["steps"]
+    assert is_list(steps) and len(steps) == 4
+    first, *rest = steps
+    assert is_record(first) and is_record(first["uses"])
+    assert str(first["uses"]["version"]).startswith("v")
+    assert [step["if"] for step in rest if is_record(step)] == [
+        "steps.release.outputs.release_created"
+    ] * 3
+    assert is_record(rest[-1]) and rest[-1]["run"] == "./zuke publish"
+
+
+async def test_publish_builds_then_uploads_with_trusted_publishing() -> None:
+    seen: list[list[str]] = []
+
+    async def exec_(params: object) -> object:
+        seen.append(field_strings(params, "argv", "exec"))
+        return {"code": 0, "stdout": "", "stderr": ""}
+
+    peer: Peer
+    async with served(Zuke()) as peer:
+        peer.on("exec", exec_)
+        await peer.request("build.configure", {"parameters": {}})
+        params = {"target": "publish", "runId": "r1", "dryRun": False}
+        assert await asyncio.wait_for(peer.request("target.run", params), 10) is None
+    assert seen == [
+        ["uv", "build"],
+        ["uv", "publish", "--trusted-publishing", "always"],
     ]
 
 

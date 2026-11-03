@@ -16,9 +16,20 @@ build to it and runs your target bodies when asked.
 > under [#3](https://github.com/zuke-build/zuke-python/issues/3). The worker
 > loop, the authoring surface, the body context, the hooks, the gates and the
 > services are in, the worker passes every conformance case of `@zuke/engine`
-> 1.0.0, and this repository's own gate runs as a Zuke build on that engine;
-> the tool facades are next. The sequencing is described in
+> 1.0.0, this repository's own gate runs as a Zuke build on that engine, and
+> the tool facades are generated from the engine's spec. The sequencing is
+> described in
 > [`AGENTS.md`](./AGENTS.md#status-and-sequencing).
+
+## Install
+
+```sh
+uv add zuke        # or: pip install zuke
+```
+
+The package has no runtime dependencies. It runs your build on
+[`@zuke/engine`](https://jsr.io/@zuke/engine), which the `./zuke` launcher
+bootstraps along with Deno; see [Development](#development) for the launcher.
 
 ## What it looks like
 

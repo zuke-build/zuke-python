@@ -57,6 +57,11 @@ PINS = {
         "ref": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
         "version": "v7.0.1",
     },
+    "googleapis/release-please-action": {
+        "ref": "googleapis/release-please-action"
+        "@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071",
+        "version": "v4.4.1",
+    },
 }
 """The pinned actions the workflow uses: the Zuke prelude, and what it is made of."""
 RUNNERS = ["ubuntu-latest", "macos-latest", "windows-latest"]
@@ -240,6 +245,12 @@ def reviewers(r: ReviewSettings) -> ReviewSettings:
     )
 
 
+async def publish(ctx: Context) -> None:
+    """Build the sdist and the wheel, then upload them with trusted publishing."""
+    await ctx.sh("uv", "build")
+    await ctx.sh("uv", "publish", "--trusted-publishing", "always")
+
+
 async def fetch_review_base(ctx: Context) -> None:
     """Fetch the branch the reviewers diff against, which a shallow checkout lacks."""
     result = await GitTasks.fetch(
@@ -331,6 +342,11 @@ class Zuke(Build):
         .description("Check the commenter may start a review")
         .executes(lambda ctx: AiTasks.preflight(ctx, reviewers))
     )
+    publish = (
+        target()
+        .description("Build the distributions and publish them to PyPI")
+        .executes(publish)
+    )
     vendor_cases = (
         target()
         .description("Vendor the engine's conformance cases at a tag")
@@ -414,6 +430,59 @@ class Zuke(Build):
                     },
                 ],
             },
+        )
+        .pins(PINS)
+    )
+
+    release_workflow = (
+        cicd()
+        .path(".github/workflows/release.yml")
+        .pipeline(
+            {
+                "name": "Release",
+                "triggers": {"push": ["main"]},
+                "concurrency": {
+                    "group": "release-${{ github.ref }}",
+                    "cancelInProgress": False,
+                },
+                "harden": {"egress": "audit"},
+            }
+        )
+        .invokes(
+            {
+                "target": publish,
+                "id": "release",
+                "name": "Maintain the release PR, and publish a cut release",
+                # The trusted publisher PyPI knows is this workflow under this
+                # environment; the token is minted from the job's identity.
+                "environment": "pypi",
+                "permissions": {
+                    "contents": "write",
+                    "pull-requests": "write",
+                    "id-token": "write",
+                },
+                "timeoutMinutes": 15,
+                "steps": [
+                    {
+                        "name": "Maintain the release PR and cut the release",
+                        "id": "release",
+                        "uses": PINS["googleapis/release-please-action"],
+                        "with": {
+                            "config-file": ".release-please-config.json",
+                            "manifest-file": ".release-please-manifest.json",
+                        },
+                    },
+                    *[
+                        {**step, "if": "steps.release.outputs.release_created"}
+                        for step in UV_STEPS
+                    ],
+                    {
+                        "name": "Publish to PyPI with Zuke",
+                        "if": "steps.release.outputs.release_created",
+                        "run": "./zuke publish",
+                    },
+                ],
+            }
         )
         .pins(PINS)
     )
