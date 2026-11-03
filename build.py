@@ -257,6 +257,8 @@ async def publish(ctx: Context) -> None:
     uv publish uploads along with it: the Security tab on PyPI then verifies
     the files back to this workflow.
     """
+    # A fresh dist/, so what is signed and uploaded is exactly this build.
+    shutil.rmtree(DIST, ignore_errors=True)
     await ctx.sh("uv", "build")
     files = sorted(str(p) for p in DIST.iterdir() if p.suffix in {".whl", ".gz"})
     await ctx.sh("uvx", "--from", ATTESTATIONS, "pypi-attestations", "sign", *files)

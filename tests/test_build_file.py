@@ -242,6 +242,8 @@ async def test_publish_builds_signs_the_distributions_then_uploads(
 ) -> None:
     dist = tmp_path / "dist"
     monkeypatch.setattr(build, "DIST", dist)
+    dist.mkdir()
+    (dist / "zuke-0.9.0.tar.gz").write_text("")  # left by an earlier build
     seen: list[list[str]] = []
 
     async def exec_(params: object) -> object:
@@ -261,9 +263,10 @@ async def test_publish_builds_signs_the_distributions_then_uploads(
         assert await asyncio.wait_for(peer.request("target.run", params), 10) is None
     wheel = str(dist / "zuke-1.0.0-py3-none-any.whl")
     sdist = str(dist / "zuke-1.0.0.tar.gz")
+    assert not (dist / "zuke-0.9.0.tar.gz").exists()
     assert seen == [
         ["uv", "build"],
-        # Only the distributions are signed, each by its path, in a fixed order.
+        # Only this build's distributions are signed, by path, in a fixed order.
         [
             "uvx",
             "--from",
