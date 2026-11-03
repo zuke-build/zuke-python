@@ -38,6 +38,9 @@ jobs:
         if: steps.release.outputs.release_created
         shell: bash
         run: uv sync --locked
-      - name: Publish to PyPI with Zuke
+      - name: Build the distributions with Zuke
         if: steps.release.outputs.release_created
-        run: ./zuke publish
+        run: ./zuke dist
+      - name: Publish to PyPI with provenance
+        if: steps.release.outputs.release_created
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3

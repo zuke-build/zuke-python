@@ -62,6 +62,10 @@ PINS = {
         "@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071",
         "version": "v4.4.1",
     },
+    "pypa/gh-action-pypi-publish": {
+        "ref": "pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086",
+        "version": "v1.14.3",
+    },
 }
 """The pinned actions the workflow uses: the Zuke prelude, and what it is made of."""
 RUNNERS = ["ubuntu-latest", "macos-latest", "windows-latest"]
@@ -245,10 +249,9 @@ def reviewers(r: ReviewSettings) -> ReviewSettings:
     )
 
 
-async def publish(ctx: Context) -> None:
-    """Build the sdist and the wheel, then upload them with trusted publishing."""
+async def dist(ctx: Context) -> None:
+    """Build the sdist and the wheel into dist/, for the release workflow to upload."""
     await ctx.sh("uv", "build")
-    await ctx.sh("uv", "publish", "--trusted-publishing", "always")
 
 
 async def fetch_review_base(ctx: Context) -> None:
@@ -342,10 +345,10 @@ class Zuke(Build):
         .description("Check the commenter may start a review")
         .executes(lambda ctx: AiTasks.preflight(ctx, reviewers))
     )
-    publish = (
+    dist = (
         target()
-        .description("Build the distributions and publish them to PyPI")
-        .executes(publish)
+        .description("Build the sdist and the wheel into dist/")
+        .executes(dist)
     )
     vendor_cases = (
         target()
@@ -450,11 +453,12 @@ class Zuke(Build):
         )
         .invokes(
             {
-                "target": publish,
+                "target": dist,
                 "id": "release",
                 "name": "Maintain the release PR, and publish a cut release",
                 # The trusted publisher PyPI knows is this workflow under this
-                # environment; the token is minted from the job's identity.
+                # environment; the token is minted from the job's identity, and
+                # so are the provenance attestations the upload step signs.
                 "environment": "pypi",
                 "permissions": {
                     "contents": "write",
@@ -477,9 +481,14 @@ class Zuke(Build):
                         for step in UV_STEPS
                     ],
                     {
-                        "name": "Publish to PyPI with Zuke",
+                        "name": "Build the distributions with Zuke",
                         "if": "steps.release.outputs.release_created",
-                        "run": "./zuke publish",
+                        "run": "./zuke dist",
+                    },
+                    {
+                        "name": "Publish to PyPI with provenance",
+                        "if": "steps.release.outputs.release_created",
+                        "uses": PINS["pypa/gh-action-pypi-publish"],
                     },
                 ],
             }

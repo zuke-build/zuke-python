@@ -31,7 +31,7 @@ def test_the_gate_depends_on_every_check() -> None:
         "review_base",
         "review",
         "review_preflight",
-        "publish",
+        "dist",
         "vendor_cases",
         "vendor_spec",
     ]
@@ -223,21 +223,26 @@ def test_the_release_workflow_publishes_a_cut_release_from_main() -> None:
     invokes = declared["invokes"]
     assert is_list(invokes) and len(invokes) == 1
     (job,) = invokes
-    assert is_record(job) and job["target"] == "publish"
+    assert is_record(job) and job["target"] == "dist"
     assert job["environment"] == "pypi"
     assert is_record(job["permissions"]) and job["permissions"]["id-token"] == "write"
     steps = job["steps"]
-    assert is_list(steps) and len(steps) == 4
+    assert is_list(steps) and len(steps) == 5
     first, *rest = steps
     assert is_record(first) and is_record(first["uses"])
     assert str(first["uses"]["version"]).startswith("v")
     assert [step["if"] for step in rest if is_record(step)] == [
         "steps.release.outputs.release_created"
-    ] * 3
-    assert is_record(rest[-1]) and rest[-1]["run"] == "./zuke publish"
+    ] * 4
+    build, upload = rest[-2:]
+    assert is_record(build) and build["run"] == "./zuke dist"
+    # The upload is the PyPA action: it signs the provenance attestations
+    # from the job's identity, which uv publish alone would not attach.
+    assert is_record(upload) and is_record(upload["uses"])
+    assert str(upload["uses"]["ref"]).startswith("pypa/gh-action-pypi-publish@")
 
 
-async def test_publish_builds_then_uploads_with_trusted_publishing() -> None:
+async def test_dist_builds_the_distributions_and_uploads_nothing() -> None:
     seen: list[list[str]] = []
 
     async def exec_(params: object) -> object:
@@ -248,12 +253,9 @@ async def test_publish_builds_then_uploads_with_trusted_publishing() -> None:
     async with served(Zuke()) as peer:
         peer.on("exec", exec_)
         await peer.request("build.configure", {"parameters": {}})
-        params = {"target": "publish", "runId": "r1", "dryRun": False}
+        params = {"target": "dist", "runId": "r1", "dryRun": False}
         assert await asyncio.wait_for(peer.request("target.run", params), 10) is None
-    assert seen == [
-        ["uv", "build"],
-        ["uv", "publish", "--trusted-publishing", "always"],
-    ]
+    assert seen == [["uv", "build"]]
 
 
 def configure_calls(params: object) -> list[object]:
