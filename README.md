@@ -97,7 +97,9 @@ uv sync          # the locked environment
 The gate is itself a Zuke build, `build.py`, run by `@zuke/engine` at the
 version `zuke.json` pins: the launcher bootstraps Deno, the engine starts
 `build.py` as its worker, and every command a target runs goes through the
-engine. `./zuke.ps1` is the launcher on Windows.
+engine. `./zuke.ps1` is the launcher on Windows. The engine, every tool
+wrapper it imports, and their `@zuke/core` run frozen against `deno.lock`;
+`./zuke lock` rewrites it, and `./zuke vendor_spec` relocks on its own.
 
 The same AI reviewers the engine repository runs review this repository's
 pull requests, from `build.py`'s `review` target through `zuke.tools.ai`: the

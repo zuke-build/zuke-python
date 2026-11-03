@@ -31,6 +31,7 @@ from zuke import (
 from zuke._generate import generate
 from zuke._guard import is_list, record, string
 from zuke.tools.ai import AiTasks, Reviewer, ReviewSettings
+from zuke.tools.deno import DenoTasks
 from zuke.tools.git import GitTasks
 
 UV = ("uv", "run")
@@ -44,6 +45,10 @@ TOOL_SPEC = "packages/engine/spec/tools.json"
 """The spec's path in the engine repository."""
 TOOLS = Path(__file__).parent / "src" / "zuke" / "tools"
 """Where the facades the spec generates are committed."""
+LOCK = Path(__file__).parent / "deno.lock"
+"""The lock the launchers run the engine, and every wrapper it imports, frozen to."""
+ZUKE_JSON = Path(__file__).parent / "zuke.json"
+"""Where the launchers read the engine version they run."""
 DIST = Path(__file__).parent / "dist"
 """Where uv build writes the sdist and the wheel, and their attestations go."""
 ATTESTATIONS = "pypi-attestations==0.0.31"
@@ -162,18 +167,78 @@ async def vendor_spec(ctx: Context) -> None:
         json.dumps(engine, indent=2) + "\n", encoding="utf-8"
     )
     await ctx.log(f"vendored the tool spec at {tag}")
+    await lock(ctx)
 
 
-def generated() -> dict[str, str]:
-    """The facades the vendored spec generates, by file name."""
+def pinned() -> dict[str, str]:
+    """The wrapper releases the vendored spec names, by package."""
     engine = record(
         json.loads((SPEC / "engine.json").read_text(encoding="utf-8")), "engine.json"
     )
     versions = record(engine.get("versions"), "engine.json versions")
-    pinned = {name: string(versions, name, "versions") for name in versions}
+    return {name: string(versions, name, "versions") for name in versions}
+
+
+def generated() -> dict[str, str]:
+    """The facades the vendored spec generates, by file name."""
     return generate(
-        json.loads((SPEC / "tools.json").read_text(encoding="utf-8")), pinned
+        json.loads((SPEC / "tools.json").read_text(encoding="utf-8")), pinned()
     )
+
+
+def locked() -> list[str]:
+    """What ``deno.lock`` must pin: the engine ``zuke.json`` names, every wrapper."""
+    config = record(json.loads(ZUKE_JSON.read_text(encoding="utf-8")), "zuke.json")
+    engine = string(config, "engine", "zuke.json")
+    wrappers = [f"jsr:@zuke/{name}@{version}" for name, version in pinned().items()]
+    return [f"jsr:@zuke/engine@{engine}", *wrappers]
+
+
+async def lock(ctx: Context) -> None:
+    """Rewrite ``deno.lock`` from scratch over the engine and every wrapper.
+
+    The engine imports each wrapper dynamically, so no module names them all:
+    a throwaway entry module imports each release, and caching it records the
+    whole graph, integrity hashes included. ``--no-config`` keeps a Deno config
+    above the temporary directory from remapping what gets locked.
+    """
+    seed = Path(tempfile.mkdtemp(prefix="zuke-lock-"))
+    try:
+        entry = seed / "seed.ts"
+        entry.write_text(
+            "".join(f'import "{spec}";\n' for spec in locked()), encoding="utf-8"
+        )
+        LOCK.unlink(missing_ok=True)
+        await DenoTasks.cache(
+            ctx, lambda s: s.paths(str(entry)).args("--no-config", f"--lock={LOCK}")
+        )
+    finally:
+        shutil.rmtree(seed)
+    await ctx.log(f"locked {len(locked())} release(s) in {LOCK.name}")
+
+
+async def lock_check(ctx: Context) -> None:
+    """Fail when ``deno.lock`` is missing, misses a release, or the run changed it."""
+    if not LOCK.exists():
+        raise ValueError(
+            f"{LOCK.name} is missing, so nothing ran frozen; run ./zuke lock"
+        )
+    lockfile = record(json.loads(LOCK.read_text(encoding="utf-8")), LOCK.name)
+    specifiers = record(lockfile.get("specifiers"), f"{LOCK.name} specifiers")
+    missing = [spec for spec in locked() if spec not in specifiers]
+    if missing:
+        raise ValueError(
+            f"{LOCK.name} does not pin {', '.join(missing)}; run ./zuke lock"
+        )
+    status = await GitTasks.status(
+        ctx, lambda s: s.porcelain().paths(str(LOCK)).quiet()
+    )
+    if status.stdout.strip():
+        raise ValueError(
+            f"{LOCK.name} differs from the commit, so this run did not prove the "
+            "committed lock; commit a deliberate ./zuke lock, or restore it"
+        )
+    await ctx.log(f"{LOCK.name} pins the engine and every wrapper, unchanged")
 
 
 async def write_facades(ctx: Context, into: Path) -> None:
@@ -335,10 +400,22 @@ class Zuke(Build):
         .description("Check zuke.tools matches the vendored tool spec")
         .executes(facades_check)
     )
+    lock = (
+        target()
+        .description("Rewrite deno.lock over the engine and every wrapper release")
+        .executes(lock)
+    )
+    lock_check = (
+        target()
+        .description("Check deno.lock pins every release and the run left it as is")
+        # Soft-ordered last: it reports what the whole run did to the lock.
+        .after(fmt_check, lint, check, test, facades_check)
+        .executes(lock_check)
+    )
     ci = (
         target()
-        .description("The gate: formatting, lint, types, tests, the facades")
-        .depends_on(fmt_check, lint, check, test, facades_check)
+        .description("The gate: formatting, lint, types, tests, the facades, the lock")
+        .depends_on(fmt_check, lint, check, test, facades_check, lock_check)
     )
     review_base = (
         target()
@@ -370,7 +447,8 @@ class Zuke(Build):
     vendor_spec = (
         target()
         .description(
-            "Vendor the engine's tool spec and the wrappers' versions at a tag"
+            "Vendor the engine's tool spec and the wrappers' versions at a tag, "
+            "and relock"
         )
         .requires(engine_repo, engine_tag)
         .executes(vendor_spec)

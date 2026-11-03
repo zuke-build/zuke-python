@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 
 import build
@@ -27,6 +28,8 @@ def test_the_gate_depends_on_every_check() -> None:
         "test",
         "facades",
         "facades_check",
+        "lock",
+        "lock_check",
         "ci",
         "review_base",
         "review",
@@ -36,6 +39,14 @@ def test_the_gate_depends_on_every_check() -> None:
         "vendor_spec",
     ]
     assert Zuke.ci.manifest()["dependsOn"] == [
+        "fmt_check",
+        "lint",
+        "check",
+        "test",
+        "facades_check",
+        "lock_check",
+    ]
+    assert Zuke.lock_check.manifest()["after"] == [
         "fmt_check",
         "lint",
         "check",
@@ -123,6 +134,8 @@ async def test_vendor_spec_then_facades_then_the_check(
 ) -> None:
     monkeypatch.setattr(build, "SPEC", tmp_path / "spec")
     monkeypatch.setattr(build, "TOOLS", tmp_path / "tools")
+    monkeypatch.setattr(build, "LOCK", tmp_path / "deno.lock")
+    (tmp_path / "deno.lock").write_text("stale")
     fixtures = Path(__file__).parent / "fixtures"
     spec = (fixtures / "spec.json").read_text()
     at = "engine-v9.9.9:packages"
@@ -156,10 +169,17 @@ async def test_vendor_spec_then_facades_then_the_check(
         logged.append(str(params))
         return None
 
+    cached: list[object] = []
+
+    async def tool_call(params: object) -> object:
+        cached.append(params)
+        return {"code": 0, "stdout": "", "stderr": ""}
+
     peer: Peer
     async with served(Zuke()) as peer:
         peer.on("exec", exec_)
         peer.on("log", log)
+        peer.on("tool.call", tool_call)
         configure = {
             "parameters": {"engine_repo": "../zuke", "engine_tag": "engine-v9.9.9"}
         }
@@ -175,6 +195,15 @@ async def test_vendor_spec_then_facades_then_the_check(
             '{\n  "tag": "engine-v9.9.9",\n  "versions": {\n'
             '    "widget": "0.1.0",\n    "tally": "0.2.0"\n  }\n}\n'
         )
+        # The new versions are relocked: the old lock is gone, and the cache
+        # runs over the engine and both wrappers.
+        assert not (tmp_path / "deno.lock").exists()
+        (call,) = cached
+        assert is_record(call) and (call["package"], call["task"]) == ("deno", "cache")
+        paths, args = configure_calls(call)
+        assert args == ["args", ["--no-config", f"--lock={tmp_path / 'deno.lock'}"]]
+        assert is_list(paths) and paths[0] == "paths"
+        assert "locked 3 release(s) in deno.lock" in logged[-1]
         assert await run("facades") is None
         written = sorted(p.name for p in (tmp_path / "tools").iterdir())
         assert written == ["__init__.py", "_tooling.py", "tally.py", "widget.py"]
@@ -369,3 +398,55 @@ async def test_the_review_leaves_the_key_out_when_the_parameter_is_unset() -> No
     setters = security[1][0]["configure"]
     assert is_list(setters)
     assert "apiKey" not in [call[0] for call in setters if is_list(call)]
+
+
+async def test_lock_check_names_what_is_wrong_with_the_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lock = tmp_path / "deno.lock"
+    monkeypatch.setattr(build, "LOCK", lock)
+    status: list[str] = ["?? deno.lock\n"]
+    calls: list[object] = []
+
+    async def tool_call(params: object) -> object:
+        calls.append(params)
+        return {"code": 0, "stdout": status[0], "stderr": ""}
+
+    def pinning(specifiers: list[str]) -> None:
+        lock.write_text(json.dumps({"specifiers": dict.fromkeys(specifiers, "1")}))
+
+    peer: Peer
+    async with served(Zuke()) as peer:
+        peer.on("tool.call", tool_call)
+        peer.on("log", lambda _: asyncio.sleep(0))
+        await peer.request("build.configure", {"parameters": {}})
+
+        async def check() -> object:
+            params = {"target": "lock_check", "runId": "r1", "dryRun": False}
+            return await asyncio.wait_for(peer.request("target.run", params), 10)
+
+        with pytest.raises(RpcError, match=r"deno\.lock is missing"):
+            await check()
+        everything = build.locked()
+        assert everything[0].startswith("jsr:@zuke/engine@")
+        assert "jsr:@zuke/git@" + build.pinned()["git"] in everything
+        pinning(everything[1:])
+        with pytest.raises(RpcError, match=r"does not pin jsr:@zuke/engine@"):
+            await check()
+        pinning(everything)
+        with pytest.raises(RpcError, match="differs from the commit"):
+            await check()
+        status[0] = ""
+        assert await check() is None
+    git = calls[-1]
+    assert is_record(git) and (git["package"], git["task"]) == ("git", "status")
+    assert configure_calls(git) == [
+        ["porcelain", []],
+        ["paths", [str(lock)]],
+        ["quiet", []],
+    ]
+
+
+def test_the_committed_lock_pins_every_release() -> None:
+    lockfile = json.loads(build.LOCK.read_text())
+    assert set(build.locked()) <= set(lockfile["specifiers"])
