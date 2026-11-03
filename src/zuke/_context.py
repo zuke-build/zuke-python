@@ -32,6 +32,15 @@ class ExecResult:
     """What it printed to stderr."""
 
 
+def exec_result_of(answer: object, method: str) -> ExecResult:
+    """The :class:`ExecResult` an answer of ``method`` carries, each field guarded."""
+    return ExecResult(
+        code=integer(answer, "code", method),
+        stdout=string(answer, "stdout", method),
+        stderr=string(answer, "stderr", method),
+    )
+
+
 class CommandError(Exception):
     """A command :meth:`ServiceContext.sh` ran exited with a code other than zero."""
 
@@ -130,12 +139,7 @@ class ServiceContext:
             params["env"] = dict(env)
         if stdin is not None:
             params["stdin"] = stdin
-        answer = await self.call_("exec", **params)
-        result = ExecResult(
-            code=integer(answer, "code", "exec"),
-            stdout=string(answer, "stdout", "exec"),
-            stderr=string(answer, "stderr", "exec"),
-        )
+        result = exec_result_of(await self.call_("exec", **params), "exec")
         if check and result.code != 0:
             raise CommandError(argv, result)
         return result

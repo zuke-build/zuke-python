@@ -24,7 +24,7 @@ build to it and runs your target bodies when asked.
 
 ```python
 from zuke import Build, parameter, run, target
-from zuke.tools import docker
+from zuke.tools.docker import DockerTasks
 
 
 class CI(Build):
@@ -38,7 +38,7 @@ class CI(Build):
         target()
         .depends_on(test)
         .executes(
-            lambda ctx: docker.build(
+            lambda ctx: DockerTasks.build(
                 ctx, lambda s: s.tag(f"app:{tag.value}").file("Dockerfile")
             )
         )
@@ -61,8 +61,12 @@ A target may declare a `.condition(...)`, a `.cache_key(...)`, a `.lock(...)`, a
 `.waits_for(...)` gate and `.validate_during(...)` checks; `service()` declares
 a service with `start`, `ready` and `stop` phases; a `Build` overrides
 `on_start`, `on_target_start`, `on_target_end` and `on_finish` for hooks; and
-`ci()` fields declare the CI files `zuke generate-ci` renders. `zuke.tools` is
-a later slice.
+`ci()` fields declare the CI files `zuke generate-ci` renders. `zuke.tools`
+holds a facade per engine wrapper, `zuke.tools.docker`, `zuke.tools.deno` and
+the rest, generated from the engine's tool spec: `DockerTasks.build(ctx, lambda
+s: ...)` sends the engine a `tool.call` naming the wrapper's release, the task
+and the setters the lambda called, and the engine runs the real wrapper with
+the worker's environment and directory.
 
 `./zuke test` then runs the Zuke engine, which starts this file as a worker,
 asks it for the graph, and runs `lint` and `test` with every subprocess spawned

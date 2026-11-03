@@ -42,6 +42,8 @@ dev = [
 target-version = "py312"
 line-length = 88
 src = ["src", "tests"]
+# The generator's goldens are its raw output, before ruff formats it.
+extend-exclude = ["tests/fixtures"]
 
 [tool.ruff.lint]
 # Every rule set that catches a defect or an untyped surface; the style sets
@@ -67,6 +69,11 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
+# The tool.call fields, as the engine names them, are the call's arguments.
+"src/zuke/_facade.py" = ["PLR0913", "PLR0917"]
+# Generated from the engine's tool spec: a docstring is the wrapper's own, and
+# a task takes as many arguments as the wrapper's does.
+"src/zuke/tools/*.py" = ["E501", "PLR0913", "PLR0917", "RUF001", "RUF002"]
 # A test may assert, hold a fake token, and run a subprocess by argv.
 "tests/**" = ["S101", "S105", "S603"]
 # A test runs a build file's last line as if it were the main module, and one
@@ -91,3 +98,5 @@ asyncio_default_fixture_loop_scope = "function"
 
 [tool.coverage.run]
 source = ["zuke"]
+# Generated from the engine's tool spec; the generator's golden tests prove it.
+omit = ["*/zuke/tools/*"]

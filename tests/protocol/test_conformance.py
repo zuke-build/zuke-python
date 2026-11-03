@@ -23,7 +23,7 @@ import pytest
 from twins import bools, cases, expected, manifest_of, records
 from zuke._guard import is_list
 from zuke._guard import strings as field_strings
-from zuke._rpc import MAX_LINE, Handler, Peer, RpcError, is_record
+from zuke._rpc import CANCELLED, MAX_LINE, Handler, Peer, RpcError, is_record
 
 TESTS = Path(__file__).resolve().parent.parent
 WORKER = Path(__file__).with_name("worker.py")
@@ -31,6 +31,7 @@ CASES = TESTS / "protocol" / "cases"
 TOKEN = "c0nf0rm"
 SERVED = (
     "exec",
+    "tool.call",
     "state.get",
     "state.set",
     "state.trySet",
@@ -68,7 +69,13 @@ def answers_of(block: dict[str, object]) -> deque[tuple[str, object]]:
     lines = field_strings(block, "answers", "case") if "answers" in block else []
     for line in lines:
         method, _, text = line.partition(" ")
-        answer: object = json.loads(text)
+        answer: object
+        if text.startswith("error "):
+            # ``method error <code> <message>``: the engine refused the call.
+            _, code, message = text.split(" ", 2)
+            answer = RpcError(int(code), message)
+        else:
+            answer = json.loads(text)
         parsed.append((method, answer))
     return parsed
 
@@ -139,6 +146,8 @@ class Engine:
                     f"{self.case}: the worker called {method}; expected {scripted}"
                 )
                 self.answers.popleft()
+                if isinstance(answer, RpcError):
+                    raise answer
                 return answer
             return DEFAULT_ANSWERS.get(method, {})
 
@@ -198,6 +207,7 @@ class Replay:
 
     def __init__(self, case: str) -> None:
         self.name = case
+        self.cancels = False
         self.case = load(case)
         self.manifest = manifest_of(case)
         self.scripts = {str(t["name"]): t for t in records(self.manifest["targets"])}
@@ -234,6 +244,10 @@ class Replay:
 
     async def drive(self, block: dict[str, object]) -> None:
         self.engine.answers = answers_of(block)
+        self.cancels = any(
+            isinstance(answer, RpcError) and answer.code == CANCELLED
+            for _, answer in answers_of(block)
+        )
         for line in field_strings(block, "calls", self.name):
             await self.call(line, block)
         assert not self.engine.answers, (
@@ -324,6 +338,12 @@ class Replay:
         if isinstance(failure, str):
             with pytest.raises(RpcError, match=failure):
                 await self.ask("target.run", params)
+        elif self.cancels:
+            # The engine cancelled a call the body made: the body unwinds, and
+            # the worker answers the run as cancelled.
+            with pytest.raises(RpcError, match="was cancelled") as cancelled:
+                await self.ask("target.run", params)
+            assert cancelled.value.code == CANCELLED
         else:
             assert await self.ask("target.run", params) is None, self.worker.output()
 
@@ -348,7 +368,7 @@ class Replay:
 
 
 def test_the_cases_are_the_vendored_set() -> None:
-    assert is_list(json.loads(json.dumps(cases()))) and len(cases()) == 18
+    assert is_list(json.loads(json.dumps(cases()))) and len(cases()) == 23
 
 
 @pytest.mark.parametrize("case", cases())

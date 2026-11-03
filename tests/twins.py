@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from contextlib import suppress
 from pathlib import Path
 
 from zuke import (
@@ -33,9 +34,11 @@ from zuke import (
     target,
 )
 from zuke._dsl import Body
+from zuke._facade import call as tool_call
 from zuke._guard import is_list
+from zuke._guard import string as field
 from zuke._guard import strings as field_strings
-from zuke._rpc import is_record
+from zuke._rpc import RpcError, is_record
 from zuke._settings import Configure
 
 CASES = Path(__file__).parent / "protocol" / "cases"
@@ -191,7 +194,10 @@ async def twin_call(ctx: Context, method: str, params: object) -> None:
     of = p.get("of")
     state = ctx.state if not isinstance(of, str) else ctx.state_of(of)
     patch = p.get("patch")
-    if method == "state.set":
+    bare = {"plan": ctx.plan, "signals": ctx.signals, "outcomes": ctx.outcomes}
+    if method in bare:
+        await bare[method]()
+    elif method == "state.set":
         await state.set(patch if is_record(patch) else {})
     elif method == "state.get":
         await state.get()
@@ -200,22 +206,36 @@ async def twin_call(ctx: Context, method: str, params: object) -> None:
     elif method == "summary.report":
         pairs = p.get("pairs")
         await ctx.summary(summary_pairs(pairs if is_record(pairs) else {}))
-    elif method == "plan":
-        await ctx.plan()
-    elif method == "signals":
-        await ctx.signals()
     elif method == "log":
         await ctx.log(str(p.get("line")))
     elif method == "outcome.of":
         await ctx.outcome_of(str(of))
-    elif method == "outcomes":
-        await ctx.outcomes()
     elif method == "secret.register":
         await ctx.secret(str(p.get("value")))
     elif method == "exec":
         await ctx.sh(*field_strings(p, "argv", "exec"))
+    elif method == "tool.call":
+        await twin_tool_call(ctx, p)
     else:
         raise ValueError(f"the twin has no call for {method}")
+
+
+async def twin_tool_call(ctx: Context, p: dict[str, object]) -> None:
+    """A scripted ``tool.call``, through the facade runtime a generated facade uses.
+
+    As the engine's scripted worker does, it notes the answer, an error
+    included, and the body goes on.
+    """
+    args = p.get("args")
+    with suppress(RpcError):
+        await tool_call(
+            ctx,
+            field(p, "package", "tool.call"),
+            field(p, "version", "tool.call"),
+            field(p, "tasks", "tool.call"),
+            field(p, "task", "tool.call"),
+            args if is_list(args) else [],
+        )
 
 
 def summary_pairs(pairs: dict[str, object]) -> dict[str, str | float]:
