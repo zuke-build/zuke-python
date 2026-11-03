@@ -44,6 +44,10 @@ TOOL_SPEC = "packages/engine/spec/tools.json"
 """The spec's path in the engine repository."""
 TOOLS = Path(__file__).parent / "src" / "zuke" / "tools"
 """Where the facades the spec generates are committed."""
+DIST = Path(__file__).parent / "dist"
+"""Where uv build writes the sdist and the wheel, and their attestations go."""
+ATTESTATIONS = "pypi-attestations==0.0.31"
+"""The PyPA tool that signs a distribution's PEP 740 provenance, pinned."""
 PINS = {
     "zuke-build/zuke": {
         "ref": "zuke-build/zuke@b0832247daa16321be405a10b71c022317d2c5a4",
@@ -61,10 +65,6 @@ PINS = {
         "ref": "googleapis/release-please-action"
         "@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071",
         "version": "v4.4.1",
-    },
-    "pypa/gh-action-pypi-publish": {
-        "ref": "pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086",
-        "version": "v1.14.3",
     },
 }
 """The pinned actions the workflow uses: the Zuke prelude, and what it is made of."""
@@ -249,9 +249,18 @@ def reviewers(r: ReviewSettings) -> ReviewSettings:
     )
 
 
-async def dist(ctx: Context) -> None:
-    """Build the sdist and the wheel into dist/, for the release workflow to upload."""
+async def publish(ctx: Context) -> None:
+    """Build the sdist and the wheel, sign their provenance, and upload them.
+
+    The signing takes the job's OIDC identity, the same one trusted publishing
+    presents to PyPI, and writes a PEP 740 attestation beside each file, which
+    uv publish uploads along with it: the Security tab on PyPI then verifies
+    the files back to this workflow.
+    """
     await ctx.sh("uv", "build")
+    files = sorted(str(p) for p in DIST.iterdir() if p.suffix in {".whl", ".gz"})
+    await ctx.sh("uvx", "--from", ATTESTATIONS, "pypi-attestations", "sign", *files)
+    await ctx.sh("uv", "publish", "--trusted-publishing", "always")
 
 
 async def fetch_review_base(ctx: Context) -> None:
@@ -345,8 +354,10 @@ class Zuke(Build):
         .description("Check the commenter may start a review")
         .executes(lambda ctx: AiTasks.preflight(ctx, reviewers))
     )
-    dist = (
-        target().description("Build the sdist and the wheel into dist/").executes(dist)
+    publish = (
+        target()
+        .description("Build, sign and publish the distributions to PyPI")
+        .executes(publish)
     )
     vendor_cases = (
         target()
@@ -451,7 +462,7 @@ class Zuke(Build):
         )
         .invokes(
             {
-                "target": dist,
+                "target": publish,
                 "id": "release",
                 "name": "Maintain the release PR, and publish a cut release",
                 # The trusted publisher PyPI knows is this workflow under this
@@ -479,14 +490,9 @@ class Zuke(Build):
                         for step in UV_STEPS
                     ],
                     {
-                        "name": "Build the distributions with Zuke",
+                        "name": "Publish to PyPI with Zuke",
                         "if": "steps.release.outputs.release_created",
-                        "run": "./zuke dist",
-                    },
-                    {
-                        "name": "Publish to PyPI with provenance",
-                        "if": "steps.release.outputs.release_created",
-                        "uses": PINS["pypa/gh-action-pypi-publish"],
+                        "run": "./zuke publish",
                     },
                 ],
             }

@@ -31,7 +31,7 @@ def test_the_gate_depends_on_every_check() -> None:
         "review_base",
         "review",
         "review_preflight",
-        "dist",
+        "publish",
         "vendor_cases",
         "vendor_spec",
     ]
@@ -223,39 +223,58 @@ def test_the_release_workflow_publishes_a_cut_release_from_main() -> None:
     invokes = declared["invokes"]
     assert is_list(invokes) and len(invokes) == 1
     (job,) = invokes
-    assert is_record(job) and job["target"] == "dist"
+    assert is_record(job) and job["target"] == "publish"
     assert job["environment"] == "pypi"
     assert is_record(job["permissions"]) and job["permissions"]["id-token"] == "write"
     steps = job["steps"]
-    assert is_list(steps) and len(steps) == 5
+    assert is_list(steps) and len(steps) == 4
     first, *rest = steps
     assert is_record(first) and is_record(first["uses"])
     assert str(first["uses"]["version"]).startswith("v")
     assert [step["if"] for step in rest if is_record(step)] == [
         "steps.release.outputs.release_created"
-    ] * 4
-    build, upload = rest[-2:]
-    assert is_record(build) and build["run"] == "./zuke dist"
-    # The upload is the PyPA action: it signs the provenance attestations
-    # from the job's identity, which uv publish alone would not attach.
-    assert is_record(upload) and is_record(upload["uses"])
-    assert str(upload["uses"]["ref"]).startswith("pypa/gh-action-pypi-publish@")
+    ] * 3
+    assert is_record(rest[-1]) and rest[-1]["run"] == "./zuke publish"
 
 
-async def test_dist_builds_the_distributions_and_uploads_nothing() -> None:
+async def test_publish_builds_signs_the_distributions_then_uploads(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    dist = tmp_path / "dist"
+    monkeypatch.setattr(build, "DIST", dist)
     seen: list[list[str]] = []
 
     async def exec_(params: object) -> object:
-        seen.append(field_strings(params, "argv", "exec"))
+        argv = field_strings(params, "argv", "exec")
+        seen.append(argv)
+        if argv == ["uv", "build"]:
+            dist.mkdir()
+            for name in ("zuke-1.0.0.tar.gz", "zuke-1.0.0-py3-none-any.whl", "x.txt"):
+                (dist / name).write_text("")
         return {"code": 0, "stdout": "", "stderr": ""}
 
     peer: Peer
     async with served(Zuke()) as peer:
         peer.on("exec", exec_)
         await peer.request("build.configure", {"parameters": {}})
-        params = {"target": "dist", "runId": "r1", "dryRun": False}
+        params = {"target": "publish", "runId": "r1", "dryRun": False}
         assert await asyncio.wait_for(peer.request("target.run", params), 10) is None
-    assert seen == [["uv", "build"]]
+    wheel = str(dist / "zuke-1.0.0-py3-none-any.whl")
+    sdist = str(dist / "zuke-1.0.0.tar.gz")
+    assert seen == [
+        ["uv", "build"],
+        # Only the distributions are signed, each by its path, in a fixed order.
+        [
+            "uvx",
+            "--from",
+            build.ATTESTATIONS,
+            "pypi-attestations",
+            "sign",
+            wheel,
+            sdist,
+        ],
+        ["uv", "publish", "--trusted-publishing", "always"],
+    ]
 
 
 def configure_calls(params: object) -> list[object]:
