@@ -10,6 +10,9 @@ engine with the worker's environment, which is the ``uv`` one.
 
 from __future__ import annotations
 
+import json
+import shutil
+import tempfile
 from pathlib import Path
 
 from zuke import (
@@ -24,12 +27,20 @@ from zuke import (
 from zuke import (
     ci as cicd,
 )
+from zuke._generate import generate
+from zuke._guard import is_list, record, string
 
 UV = ("uv", "run")
 CASES = Path(__file__).parent / "tests" / "protocol" / "cases"
 """Where the engine's conformance cases are vendored."""
 CONFORMANCE = "packages/engine/conformance"
 """The cases' directory in the engine repository."""
+SPEC = Path(__file__).parent / "spec"
+"""Where the engine's tool spec is vendored, with the tag and the wrappers' versions."""
+TOOL_SPEC = "packages/engine/spec/tools.json"
+"""The spec's path in the engine repository."""
+TOOLS = Path(__file__).parent / "src" / "zuke" / "tools"
+"""Where the facades the spec generates are committed."""
 PINS = {
     "zuke-build/zuke": {
         "ref": "zuke-build/zuke@b0832247daa16321be405a10b71c022317d2c5a4",
@@ -71,15 +82,86 @@ async def vendor(ctx: Context) -> None:
     await ctx.log(f"vendored the conformance cases at {tag}")
 
 
+async def shown(ctx: Context, repo: str, ref: str, path: str) -> str:
+    """The text of ``path`` in ``repo`` at ``ref``."""
+    return (await ctx.sh("git", "-C", repo, "show", f"{ref}:{path}")).stdout
+
+
+async def vendor_spec(ctx: Context) -> None:
+    """Replace the vendored tool spec, and the wrappers' versions, with the tag's."""
+    repo, tag = required(Zuke.engine_repo), required(Zuke.engine_tag)
+    spec = await shown(ctx, repo, tag, TOOL_SPEC)
+    packages = record(json.loads(spec), "spec").get("packages")
+    versions: dict[str, str] = {}
+    for entry in packages if is_list(packages) else []:
+        name = string(entry, "name", "package")
+        deno = json.loads(await shown(ctx, repo, tag, f"packages/{name}/deno.json"))
+        versions[name] = string(deno, "version", name)
+    SPEC.mkdir(exist_ok=True)
+    (SPEC / "tools.json").write_text(spec)
+    engine = {"tag": tag, "versions": versions}
+    (SPEC / "engine.json").write_text(json.dumps(engine, indent=2) + "\n")
+    await ctx.log(f"vendored the tool spec at {tag}")
+
+
+def generated() -> dict[str, str]:
+    """The facades the vendored spec generates, by file name."""
+    engine = record(json.loads((SPEC / "engine.json").read_text()), "engine.json")
+    versions = record(engine.get("versions"), "engine.json versions")
+    pinned = {name: string(versions, name, "versions") for name in versions}
+    return generate(json.loads((SPEC / "tools.json").read_text()), pinned)
+
+
+async def write_facades(ctx: Context, into: Path) -> None:
+    """Write the generated facades into ``into``, formatted as the gate expects."""
+    into.mkdir(parents=True, exist_ok=True)
+    for stale in into.glob("*.py"):
+        stale.unlink()
+    for name, text in generated().items():
+        (into / name).write_text(text)
+    config = Path(__file__).parent / "pyproject.toml"
+    await ctx.sh(*UV, "ruff", "format", "--quiet", "--config", str(config), str(into))
+
+
+async def facades(ctx: Context) -> None:
+    """Regenerate ``zuke.tools`` from the vendored spec."""
+    await write_facades(ctx, TOOLS)
+    await ctx.log(f"wrote {len(generated())} module(s) under {TOOLS}")
+
+
+async def facades_check(ctx: Context) -> None:
+    """Fail when ``zuke.tools`` differs from what the vendored spec generates."""
+    fresh = Path(tempfile.mkdtemp(prefix="zuke-facades-"))
+    try:
+        await write_facades(ctx, fresh)
+        names = {p.name for p in fresh.glob("*.py")} | {
+            p.name for p in TOOLS.glob("*.py")
+        }
+        stale = sorted(
+            name
+            for name in names
+            if not (fresh / name).exists()
+            or not (TOOLS / name).exists()
+            or (fresh / name).read_text() != (TOOLS / name).read_text()
+        )
+    finally:
+        shutil.rmtree(fresh)
+    if stale:
+        raise ValueError(
+            f"zuke.tools is out of date: {', '.join(stale)}; run ./zuke facades"
+        )
+    await ctx.log("zuke.tools matches the vendored spec")
+
+
 class Zuke(Build):
     """The gate this repository runs, hosted on the engine it is an SDK for."""
 
-    engine_repo = parameter(
-        "a checkout of zuke-build/zuke to vendor the cases from"
-    ).flag("engine-repo")
-    engine_tag = parameter(
-        "the engine tag to vendor the cases at, such as engine-v1.0.0"
-    ).flag("engine-tag")
+    engine_repo = parameter("a checkout of zuke-build/zuke to vendor from").flag(
+        "engine-repo"
+    )
+    engine_tag = parameter("the engine tag to vendor at, such as engine-v1.1.1").flag(
+        "engine-tag"
+    )
 
     fmt = (
         target()
@@ -106,16 +188,34 @@ class Zuke(Build):
         .description("Run the tests with coverage")
         .executes(lambda ctx: ctx.sh(*UV, "pytest"))
     )
+    facades = (
+        target()
+        .description("Regenerate zuke.tools from the vendored tool spec")
+        .executes(facades)
+    )
+    facades_check = (
+        target()
+        .description("Check zuke.tools matches the vendored tool spec")
+        .executes(facades_check)
+    )
     ci = (
         target()
-        .description("The gate: formatting, lint, types, tests")
-        .depends_on(fmt_check, lint, check, test)
+        .description("The gate: formatting, lint, types, tests, the facades")
+        .depends_on(fmt_check, lint, check, test, facades_check)
     )
     vendor_cases = (
         target()
         .description("Vendor the engine's conformance cases at a tag")
         .requires(engine_repo, engine_tag)
         .executes(vendor)
+    )
+    vendor_spec = (
+        target()
+        .description(
+            "Vendor the engine's tool spec and the wrappers' versions at a tag"
+        )
+        .requires(engine_repo, engine_tag)
+        .executes(vendor_spec)
     )
 
     ci_workflow = (

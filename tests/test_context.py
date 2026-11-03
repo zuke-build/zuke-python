@@ -4,62 +4,11 @@
 
 from __future__ import annotations
 
-import asyncio
-from collections.abc import Awaitable, Callable
-
 import pytest
 
-from conftest import FakeEngine
-from zuke import Build, CommandError, Context, ExecResult, Outcome, Plan, target
-from zuke._rpc import CANCELLED, FAILED, Handler, RpcError
-from zuke._worker import serve
-
-Body = Callable[[Context], Awaitable[None] | None]
-
-
-class Harness:
-    """Runs one body as target ``t`` of a build served to a fresh fake engine."""
-
-    def __init__(self) -> None:
-        self.calls: list[tuple[str, object]] = []
-        """Every request the body made, as the engine saw it."""
-
-    async def run(self, body: Body | None, *answers: tuple[str, object]) -> object:
-        """Run ``body`` as ``t``; the target.run answer, or the RpcError it ended in."""
-        fields: dict[str, object] = {
-            "t": target() if body is None else target().executes(body)
-        }
-        build = type("B", (Build,), fields)
-        engine = FakeEngine()
-        await engine.start()
-        serving = asyncio.ensure_future(serve(build(), engine.environ, "."))
-        peer = await engine.greeted()
-        for method, result in answers:
-            peer.on(method, self._answering(method, result))
-        try:
-            return await peer.request(
-                "target.run", {"target": "t", "runId": "r1", "dryRun": False}
-            )
-        except RpcError as error:
-            return error
-        finally:
-            await peer.notify("run.exit", {"code": 0, "suspended": False})
-            await asyncio.wait_for(serving, 5)
-            await engine.stop()
-
-    def _answering(self, method: str, result: object) -> Handler:
-        async def handler(params: object) -> object:
-            self.calls.append((method, params))
-            if isinstance(result, RpcError):
-                raise result
-            return result
-
-        return handler
-
-
-@pytest.fixture
-def harness() -> Harness:
-    return Harness()
+from conftest import Harness
+from zuke import CommandError, Context, ExecResult, Outcome, Plan
+from zuke._rpc import CANCELLED, FAILED, RpcError
 
 
 def failure(answer: object) -> tuple[int, str]:
