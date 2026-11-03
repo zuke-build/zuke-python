@@ -73,6 +73,19 @@ def test_members_drop_self_and_say_async_and_static() -> None:
     assert build["signature"].startswith("static async build(ctx: ServiceContext")
 
 
+def test_init_attributes_are_properties_typed_from_their_parameters() -> None:
+    root = reference(ROOT, "1.0.0")["packages"][0]
+    context = _symbol(root, "Context").get("members", [])
+    run_id = next(m for m in context if m["name"] == "run_id")
+    assert run_id["signature"] == "run_id: str"
+    assert run_id["doc"].startswith("The run's id")
+    error = _symbol(root, "CommandError").get("members", [])
+    assert [m["signature"] for m in error] == [
+        "argv: tuple[str, ...]",
+        "result: ExecResult",
+    ]
+
+
 def test_dataclass_fields_are_properties_with_their_docstrings() -> None:
     result = _symbol(reference(ROOT, "1.0.0")["packages"][0], "ExecResult")
     assert result.get("members") == [
@@ -155,6 +168,17 @@ class Thing:
     a.b: int = 1
     _hidden: int
 
+    def __init__(self, size: int, label) -> None:
+        self.size_ = size
+        """Typed from its parameter."""
+        self.count: int = 0
+        self.label = label
+        self.made = make_it()
+        self._private = 1
+        other.attr = 2
+        self.a = self.b = 3
+        print("not an assignment")
+
     @overload
     def get(self, key: int) -> int: ...
 
@@ -225,6 +249,34 @@ def test_the_edges_of_a_fake_package(tmp_path: Path) -> None:
             "kind": "property",
             "optional": False,
             "signature": "plain: int",
+            "doc": "",
+        },
+        {
+            "name": "size_",
+            "kind": "property",
+            "optional": False,
+            "signature": "size_: int",
+            "doc": "Typed from its parameter.",
+        },
+        {
+            "name": "count",
+            "kind": "property",
+            "optional": False,
+            "signature": "count: int",
+            "doc": "",
+        },
+        {
+            "name": "label",
+            "kind": "property",
+            "optional": False,
+            "signature": "label",
+            "doc": "",
+        },
+        {
+            "name": "made",
+            "kind": "property",
+            "optional": False,
+            "signature": "made",
             "doc": "",
         },
         {

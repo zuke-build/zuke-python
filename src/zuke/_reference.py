@@ -174,13 +174,45 @@ def _public_member(
     }
 
 
+def _instance_attributes(init: ast.FunctionDef) -> list[ApiMember]:
+    """The ``self.<name>`` attributes ``__init__`` assigns, typed where it can tell.
+
+    An annotated assignment gives its annotation; a parameter assigned as is
+    gives the parameter's; anything else is named without a type.
+    """
+    params = {a.arg: a.annotation for a in init.args.args if a.annotation}
+    found: list[ApiMember] = []
+    for index, stmt in enumerate(init.body):
+        target = stmt.target if isinstance(stmt, ast.AnnAssign) else None
+        if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1:
+            target = stmt.targets[0]
+        if not (
+            isinstance(target, ast.Attribute)
+            and isinstance(target.value, ast.Name)
+            and target.value.id == "self"
+        ):
+            continue
+        typed = stmt.annotation if isinstance(stmt, ast.AnnAssign) else None
+        value = stmt.value if isinstance(stmt, ast.Assign) else None
+        if isinstance(value, ast.Name):
+            typed = params.get(value.id)
+        signature = f"{target.attr}: {ast.unparse(typed)}" if typed else target.attr
+        doc = _attribute_doc(init.body, index)
+        member = _public_member(target.attr, "property", signature, doc)
+        if member is not None:
+            found.append(member)
+    return found
+
+
 def _class(node: ast.ClassDef) -> ApiSymbol:
     bases = ", ".join(ast.unparse(b) for b in node.bases)
-    members = [
-        member
-        for index, child in enumerate(node.body)
-        if (member := _member(child, node.body, index)) is not None
-    ]
+    members: list[ApiMember] = []
+    for index, child in enumerate(node.body):
+        if isinstance(child, ast.FunctionDef) and child.name == "__init__":
+            # The constructor itself is private; what it assigns to self is not.
+            members.extend(_instance_attributes(child))
+        elif (member := _member(child, node.body, index)) is not None:
+            members.append(member)
     symbol: ApiSymbol = {
         "name": node.name,
         "kind": "class",
