@@ -45,4 +45,5 @@ jobs:
         if: steps.release.outputs.release_created
         run: ./zuke sync_website
         env:
-          WEBSITE_SYNC_TOKEN: "${{ secrets.WEBSITE_SYNC_TOKEN }}"
+          ZUKE_BUILD_APP_ID: "${{ secrets.ZUKE_BUILD_APP_ID }}"
+          ZUKE_BUILD_APP_KEY: "${{ secrets.ZUKE_BUILD_APP_KEY }}"
