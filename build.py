@@ -44,6 +44,10 @@ TOOL_SPEC = "packages/engine/spec/tools.json"
 """The spec's path in the engine repository."""
 TOOLS = Path(__file__).parent / "src" / "zuke" / "tools"
 """Where the facades the spec generates are committed."""
+DIST = Path(__file__).parent / "dist"
+"""Where uv build writes the sdist and the wheel, and their attestations go."""
+ATTESTATIONS = "pypi-attestations==0.0.31"
+"""The PyPA tool that signs a distribution's PEP 740 provenance, pinned."""
 PINS = {
     "zuke-build/zuke": {
         "ref": "zuke-build/zuke@b0832247daa16321be405a10b71c022317d2c5a4",
@@ -246,8 +250,18 @@ def reviewers(r: ReviewSettings) -> ReviewSettings:
 
 
 async def publish(ctx: Context) -> None:
-    """Build the sdist and the wheel, then upload them with trusted publishing."""
+    """Build the sdist and the wheel, sign their provenance, and upload them.
+
+    The signing takes the job's OIDC identity, the same one trusted publishing
+    presents to PyPI, and writes a PEP 740 attestation beside each file, which
+    uv publish uploads along with it: the Security tab on PyPI then verifies
+    the files back to this workflow.
+    """
+    # A fresh dist/, so what is signed and uploaded is exactly this build.
+    shutil.rmtree(DIST, ignore_errors=True)
     await ctx.sh("uv", "build")
+    files = sorted(str(p) for p in DIST.iterdir() if p.suffix in {".whl", ".gz"})
+    await ctx.sh("uvx", "--from", ATTESTATIONS, "pypi-attestations", "sign", *files)
     await ctx.sh("uv", "publish", "--trusted-publishing", "always")
 
 
@@ -344,7 +358,7 @@ class Zuke(Build):
     )
     publish = (
         target()
-        .description("Build the distributions and publish them to PyPI")
+        .description("Build, sign and publish the distributions to PyPI")
         .executes(publish)
     )
     vendor_cases = (
@@ -454,7 +468,8 @@ class Zuke(Build):
                 "id": "release",
                 "name": "Maintain the release PR, and publish a cut release",
                 # The trusted publisher PyPI knows is this workflow under this
-                # environment; the token is minted from the job's identity.
+                # environment; the token is minted from the job's identity, and
+                # so are the provenance attestations the upload step signs.
                 "environment": "pypi",
                 "permissions": {
                     "contents": "write",

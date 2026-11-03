@@ -237,11 +237,22 @@ def test_the_release_workflow_publishes_a_cut_release_from_main() -> None:
     assert is_record(rest[-1]) and rest[-1]["run"] == "./zuke publish"
 
 
-async def test_publish_builds_then_uploads_with_trusted_publishing() -> None:
+async def test_publish_builds_signs_the_distributions_then_uploads(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    dist = tmp_path / "dist"
+    monkeypatch.setattr(build, "DIST", dist)
+    dist.mkdir()
+    (dist / "zuke-0.9.0.tar.gz").write_text("")  # left by an earlier build
     seen: list[list[str]] = []
 
     async def exec_(params: object) -> object:
-        seen.append(field_strings(params, "argv", "exec"))
+        argv = field_strings(params, "argv", "exec")
+        seen.append(argv)
+        if argv == ["uv", "build"]:
+            dist.mkdir()
+            for name in ("zuke-1.0.0.tar.gz", "zuke-1.0.0-py3-none-any.whl", "x.txt"):
+                (dist / name).write_text("")
         return {"code": 0, "stdout": "", "stderr": ""}
 
     peer: Peer
@@ -250,8 +261,21 @@ async def test_publish_builds_then_uploads_with_trusted_publishing() -> None:
         await peer.request("build.configure", {"parameters": {}})
         params = {"target": "publish", "runId": "r1", "dryRun": False}
         assert await asyncio.wait_for(peer.request("target.run", params), 10) is None
+    wheel = str(dist / "zuke-1.0.0-py3-none-any.whl")
+    sdist = str(dist / "zuke-1.0.0.tar.gz")
+    assert not (dist / "zuke-0.9.0.tar.gz").exists()
     assert seen == [
         ["uv", "build"],
+        # Only this build's distributions are signed, by path, in a fixed order.
+        [
+            "uvx",
+            "--from",
+            build.ATTESTATIONS,
+            "pypi-attestations",
+            "sign",
+            wheel,
+            sdist,
+        ],
         ["uv", "publish", "--trusted-publishing", "always"],
     ]
 
