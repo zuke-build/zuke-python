@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.1](https://github.com/zuke-build/zuke-python/compare/zuke-v1.0.0...zuke-v1.0.1) (2026-11-03)
+
+
+### Bug Fixes
+
+* run the engine and its wrappers from a committed deno.lock ([#30](https://github.com/zuke-build/zuke-python/issues/30)) ([2731e42](https://github.com/zuke-build/zuke-python/commit/2731e421632dd94621988ecf9e0215c051f93c6a))
+* sign and upload the release with provenance attestations ([#28](https://github.com/zuke-build/zuke-python/issues/28)) ([4b0a7e3](https://github.com/zuke-build/zuke-python/commit/4b0a7e31b3eb4790ba2752b6d4083013e121839d))
+
 ## 1.0.0 (2026-11-03)
 
 
