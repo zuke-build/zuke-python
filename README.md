@@ -70,7 +70,9 @@ class CI(Build):
     tag = parameter("image tag").default("dev")
     pipeline = ci().path(".github/workflows/ci.yml")
 
-    lint = target().description("ruff").executes(lambda ctx: ctx.sh("ruff", "check", "."))
+    lint = (
+        target().description("ruff").executes(lambda ctx: ctx.sh("ruff", "check", "."))
+    )
     test = target().depends_on(lint).executes(lambda ctx: ctx.sh("pytest", "-q"))
     image = (
         target()
