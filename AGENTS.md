@@ -176,6 +176,8 @@ Name every test module `test_*.py`; pytest discovers nothing else.
 | Regenerate `uv.lock`        | `uv lock`                                                  |
 | Regenerate `deno.lock`      | `./zuke lock` (`vendor_spec` relocks; `lock_check` is in the gate) |
 | Publish a cut release       | `./zuke publish` (the `release` workflow runs it on `main`) |
+| Generate the API reference  | `./zuke api_reference` (writes `.zuke/api.json`)          |
+| Sync it to the website      | `./zuke sync_website` (the `release` workflow runs it after `publish`; skipped without `WEBSITE_SYNC_TOKEN`) |
 
 `./zuke` (`./zuke.ps1` on Windows) runs `@zuke/engine` at the version
 `zuke.json` pins, which starts `build.py` as its worker; every command a target
@@ -238,4 +240,9 @@ AGENTS.md                 # this file; CLAUDE.md points here
   and `@zuke-build accept <id> <reason>` records a finding as intended.
 - **No secrets or machine-specific paths** in the repository or commits.
 - **Update docs with code.** If behaviour changes, update `README.md` and the
-  docstrings in the same PR.
+  docstrings in the same PR. The docstrings are the API reference the website
+  renders at zuke.build/api/python: `_reference.py` reads them with `ast` into
+  the same `api.json` contract the engine repository emits for TypeScript, and
+  the `release` workflow's `sync_website` step opens and auto-merges a website
+  PR with it on every release. It needs the `WEBSITE_SYNC_TOKEN` secret, a
+  token with contents and pull-requests write on the website repository.

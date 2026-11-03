@@ -1,6 +1,6 @@
 # Copyright (c) 2026 the Zuke contributors
 # SPDX-License-Identifier: MIT
-"""This repository's own build: the gate, the case vendoring, the CI workflow.
+"""This repository's own build: the gate, the vendoring, the reference, the CI.
 
 Run it through the engine: ``./zuke ci`` is the gate, ``./zuke --list`` the
 targets, and ``./zuke generate-ci`` writes the workflow declared below. The
@@ -10,6 +10,7 @@ engine with the worker's environment, which is the ``uv`` one.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import shutil
@@ -20,6 +21,7 @@ from zuke import (
     Build,
     Context,
     StringParameter,
+    __version__,
     invoke,
     parameter,
     run,
@@ -30,11 +32,29 @@ from zuke import (
 )
 from zuke._generate import generate
 from zuke._guard import is_list, record, string
+from zuke._reference import reference
 from zuke.tools.ai import AiTasks, Reviewer, ReviewSettings
 from zuke.tools.deno import DenoTasks
+from zuke.tools.gh import GhTasks
 from zuke.tools.git import GitTasks
 
 UV = ("uv", "run")
+PACKAGE = Path(__file__).parent / "src" / "zuke"
+"""The package the API reference documents."""
+REFERENCE = Path(__file__).parent / ".zuke" / "api.json"
+"""Where ``api_reference`` writes the reference; ``.gitignore`` keeps it out."""
+WEBSITE_REPO = "zuke-build/zuke-build.github.io"
+"""The website the reference is synced to on a release."""
+WEBSITE_API = "src/data/api-python.json"
+"""Where the website reads the Python reference from."""
+SYNC_BODY = (
+    "Automated sync from zuke-python: the refreshed Python API reference, "
+    "`src/data/api-python.json`, generated from the released package's "
+    "docstrings. Idempotent: regenerated on each release."
+)
+"""The body of every sync pull request; it never varies, so a rerun changes nothing."""
+BOT = ("github-actions[bot]", "41898282+github-actions[bot]@users.noreply.github.com")
+"""The identity a sync commit is made under, since a runner has none."""
 CASES = Path(__file__).parent / "tests" / "protocol" / "cases"
 """Where the engine's conformance cases are vendored."""
 CONFORMANCE = "packages/engine/conformance"
@@ -330,6 +350,111 @@ async def publish(ctx: Context) -> None:
     await ctx.sh("uv", "publish", "--trusted-publishing", "always")
 
 
+def write_reference(path: Path) -> None:
+    """Write the package's API reference, in the website's ``api.json`` shape."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    text = json.dumps(reference(PACKAGE, __version__), indent=2, ensure_ascii=False)
+    # LF everywhere, so the file a Windows run writes diffs to nothing.
+    path.write_text(text + "\n", encoding="utf-8", newline="\n")
+
+
+async def api_reference(ctx: Context) -> None:
+    """Write the reference to ``.zuke/api.json``, to look at before a release."""
+    write_reference(REFERENCE)
+    await ctx.log(f"wrote the API reference of zuke@{__version__} to {REFERENCE}")
+
+
+async def sync_website(ctx: Context) -> None:
+    """Open a website pull request with the refreshed reference, and queue its merge.
+
+    The same flow as the engine repository's ``syncWebsite``: clone the
+    website, write the reference where it reads it, push a branch per release,
+    open the pull request and enable auto-merge, so the website's own build
+    check decides whether it lands. ``GITHUB_TOKEN`` cannot push to another
+    repository, so this takes ``WEBSITE_SYNC_TOKEN``, a token with contents and
+    pull-requests write on the website; without one, as locally or on a fork,
+    the sync is skipped.
+    """
+    token = os.environ.get("WEBSITE_SYNC_TOKEN", "")
+    if not token:
+        await ctx.log("WEBSITE_SYNC_TOKEN is not set: skipping the website sync")
+        return
+    # The token rides as a one-off header rather than in the remote URL, so
+    # git never writes it to .git/config; both spellings are redacted.
+    basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+    auth = f"AUTHORIZATION: basic {basic}"
+    await ctx.secret(token)
+    await ctx.secret(auth)
+    branch = f"zuke-python-sync/{__version__}"
+    message = f"chore: sync the python api reference for zuke@{__version__}"
+    gh_env = {"GH_TOKEN": token}
+    with tempfile.TemporaryDirectory(prefix="zuke-python-sync-") as into:
+        await GitTasks.clone(
+            ctx,
+            lambda s: (
+                s.repository(f"https://github.com/{WEBSITE_REPO}.git")
+                .directory(into)
+                .depth(1)
+            ),
+        )
+        await GitTasks.checkout(ctx, lambda s: s.dir(into).ref(branch).create())
+        write_reference(Path(into, WEBSITE_API))
+        await GitTasks.add(ctx, lambda s: s.dir(into).all())
+        status = await GitTasks.status(ctx, lambda s: s.dir(into).porcelain().quiet())
+        if not status.stdout.strip():
+            await ctx.log("the website already has this reference")
+            return
+        await GitTasks.commit(
+            ctx,
+            lambda s: (
+                s.dir(into)
+                .config("user.name", BOT[0])
+                .config("user.email", BOT[1])
+                .message(message)
+            ),
+        )
+        await GitTasks.run(
+            ctx,
+            lambda s: (
+                s.dir(into)
+                .config("http.extraheader", auth)
+                .command("push", "--force", "origin", branch)
+            ),
+        )
+        # gh refuses a second PR for the same head; the push updated that one.
+        opened = await GhTasks.run(
+            ctx,
+            lambda s: (
+                s.command("pr", "create")
+                .repo(WEBSITE_REPO)
+                .flag("head", branch)
+                .flag("title", message)
+                .flag("body", SYNC_BODY)
+                .cwd(into)
+                .env(gh_env)
+                .no_throw()
+            ),
+        )
+        await ctx.log(
+            opened.stdout.strip()
+            if opened.code == 0
+            else f"the sync PR for {branch} was already open; the push updated it"
+        )
+        # Auto-merge, so the website's required build check gates the landing;
+        # failing to enable it fails the job, since nobody watches the website.
+        await GhTasks.run(
+            ctx,
+            lambda s: (
+                s.command("pr", "merge", branch)
+                .repo(WEBSITE_REPO)
+                .flag("auto")
+                .flag("squash")
+                .cwd(into)
+                .env(gh_env)
+            ),
+        )
+
+
 async def fetch_review_base(ctx: Context) -> None:
     """Fetch the branch the reviewers diff against, which a shallow checkout lacks."""
     result = await GitTasks.fetch(
@@ -437,6 +562,16 @@ class Zuke(Build):
         target()
         .description("Build, sign and publish the distributions to PyPI")
         .executes(publish)
+    )
+    api_reference = (
+        target()
+        .description("Write the API reference the website renders to .zuke/api.json")
+        .executes(api_reference)
+    )
+    sync_website = (
+        target()
+        .description("Open and merge a website PR with the refreshed API reference")
+        .executes(sync_website)
     )
     vendor_cases = (
         target()
@@ -573,6 +708,14 @@ class Zuke(Build):
                         "name": "Publish to PyPI with Zuke",
                         "if": "steps.release.outputs.release_created",
                         "run": "./zuke publish",
+                    },
+                    {
+                        "name": "Sync the API reference to the website with Zuke",
+                        "if": "steps.release.outputs.release_created",
+                        "run": "./zuke sync_website",
+                        "env": {
+                            "WEBSITE_SYNC_TOKEN": "${{ secrets.WEBSITE_SYNC_TOKEN }}"
+                        },
                     },
                 ],
             }
