@@ -126,8 +126,8 @@ async def vendor(ctx: Context) -> None:
     for name in listing.stdout.split():
         if name.endswith(".json"):
             shown = await ctx.sh("git", "-C", repo, "show", f"{tree}/{name}")
-            (CASES / name).write_text(shown.stdout)
-    (CASES / "VERSION").write_text(f"{tag}\n")
+            (CASES / name).write_text(shown.stdout, encoding="utf-8")
+    (CASES / "VERSION").write_text(f"{tag}\n", encoding="utf-8")
     await ctx.log(f"vendored the conformance cases at {tag}")
 
 
@@ -147,18 +147,24 @@ async def vendor_spec(ctx: Context) -> None:
         deno = json.loads(await shown(ctx, repo, tag, f"packages/{name}/deno.json"))
         versions[name] = string(deno, "version", name)
     SPEC.mkdir(exist_ok=True)
-    (SPEC / "tools.json").write_text(spec)
+    (SPEC / "tools.json").write_text(spec, encoding="utf-8")
     engine = {"tag": tag, "versions": versions}
-    (SPEC / "engine.json").write_text(json.dumps(engine, indent=2) + "\n")
+    (SPEC / "engine.json").write_text(
+        json.dumps(engine, indent=2) + "\n", encoding="utf-8"
+    )
     await ctx.log(f"vendored the tool spec at {tag}")
 
 
 def generated() -> dict[str, str]:
     """The facades the vendored spec generates, by file name."""
-    engine = record(json.loads((SPEC / "engine.json").read_text()), "engine.json")
+    engine = record(
+        json.loads((SPEC / "engine.json").read_text(encoding="utf-8")), "engine.json"
+    )
     versions = record(engine.get("versions"), "engine.json versions")
     pinned = {name: string(versions, name, "versions") for name in versions}
-    return generate(json.loads((SPEC / "tools.json").read_text()), pinned)
+    return generate(
+        json.loads((SPEC / "tools.json").read_text(encoding="utf-8")), pinned
+    )
 
 
 async def write_facades(ctx: Context, into: Path) -> None:
@@ -167,7 +173,7 @@ async def write_facades(ctx: Context, into: Path) -> None:
     for stale in into.glob("*.py"):
         stale.unlink()
     for name, text in generated().items():
-        (into / name).write_text(text)
+        (into / name).write_text(text, encoding="utf-8")
     config = Path(__file__).parent / "pyproject.toml"
     await ctx.sh(*UV, "ruff", "format", "--quiet", "--config", str(config), str(into))
 
@@ -191,7 +197,8 @@ async def facades_check(ctx: Context) -> None:
             for name in names
             if not (fresh / name).exists()
             or not (TOOLS / name).exists()
-            or (fresh / name).read_text() != (TOOLS / name).read_text()
+            or (fresh / name).read_text(encoding="utf-8")
+            != (TOOLS / name).read_text(encoding="utf-8")
         )
     finally:
         shutil.rmtree(fresh)
