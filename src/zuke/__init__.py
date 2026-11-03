@@ -39,8 +39,8 @@ from zuke._duration import Duration
 from zuke._run import run
 from zuke._settings import LockSettings, ValidateDuringSettings, WaitSettings
 
-__version__ = "0.0.0"
-"""The package version; release automation bumps it alongside pyproject.toml."""
+__version__ = "0.0.0"  # x-release-please-version
+"""The package version; release-please bumps it alongside pyproject.toml."""
 
 __all__ = [
     "BooleanParameter",

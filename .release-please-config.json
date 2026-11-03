@@ -1,0 +1,12 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "release-type": "python",
+  "bump-minor-pre-major": false,
+  "packages": {
+    ".": {
+      "package-name": "zuke",
+      "changelog-path": "CHANGELOG.md",
+      "extra-files": ["src/zuke/__init__.py"]
+    }
+  }
+}

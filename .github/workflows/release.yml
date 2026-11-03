@@ -1,0 +1,43 @@
+name: Release
+"on":
+  push:
+    branches:
+      - main
+permissions:
+  contents: read
+concurrency:
+  group: "release-${{ github.ref }}"
+  cancel-in-progress: false
+jobs:
+  release:
+    name: "Maintain the release PR, and publish a cut release"
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write
+    timeout-minutes: 15
+    steps:
+      - name: Harden and check out with Zuke
+        uses: zuke-build/zuke@b0832247daa16321be405a10b71c022317d2c5a4 # v1.0.8
+        with:
+          egress-policy: audit
+          persist-credentials: "false"
+      - name: Maintain the release PR and cut the release
+        id: release
+        uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4.4.1
+        with:
+          config-file: .release-please-config.json
+          manifest-file: .release-please-manifest.json
+      - name: Install uv
+        if: steps.release.outputs.release_created
+        shell: bash
+        run: pipx install uv
+      - name: Sync the locked environment
+        if: steps.release.outputs.release_created
+        shell: bash
+        run: uv sync --locked
+      - name: Publish to PyPI with Zuke
+        if: steps.release.outputs.release_created
+        run: ./zuke publish
