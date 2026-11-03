@@ -10,7 +10,7 @@ from twins import CASES, cases, expected, manifest_of, twin
 
 
 def test_the_vendored_cases_name_the_engine_release() -> None:
-    assert (CASES / "VERSION").read_text().strip() == "engine-v1.1.1"
+    assert (CASES / "VERSION").read_text().strip() == "engine-v1.2.0"
     assert len(cases()) == 23
 
 
