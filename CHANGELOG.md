@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/zuke-build/zuke-python/compare/zuke-v1.0.1...zuke-v1.1.0) (2026-11-03)
+
+
+### Features
+
+* generate the Python API reference and sync it to the website on release ([#34](https://github.com/zuke-build/zuke-python/issues/34)) ([0af1a13](https://github.com/zuke-build/zuke-python/commit/0af1a13cbaa68f61516b277ac4df19f3ee898d16))
+
 ## [1.0.1](https://github.com/zuke-build/zuke-python/compare/zuke-v1.0.0...zuke-v1.0.1) (2026-11-03)
 
 
