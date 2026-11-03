@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.0](https://github.com/zuke-build/zuke-python/compare/zuke-v1.1.0...zuke-v1.2.0) (2026-11-03)
+
+
+### Features
+
+* zuke.tools.gh carries every GhTasks task, and the review posts as the zuke-build App ([#37](https://github.com/zuke-build/zuke-python/issues/37)) ([a66d184](https://github.com/zuke-build/zuke-python/commit/a66d184fe4f2c5398b732e41d26a4011e93211a4))
+
 ## [1.1.0](https://github.com/zuke-build/zuke-python/compare/zuke-v1.0.1...zuke-v1.1.0) (2026-11-03)
 
 
