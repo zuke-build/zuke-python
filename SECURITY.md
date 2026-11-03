@@ -40,6 +40,14 @@ fixes.
 - **Locked development environment.** The tools that build, lint and test the
   package are pinned in `uv.lock`, and CI installs them with `uv sync --locked`,
   which refuses a lock that disagrees with `pyproject.toml`.
+- **Locked engine and wrappers.** `deno.lock` pins `@zuke/engine` at the
+  version `zuke.json` names, every `@zuke/<tool>` release `spec/engine.json`
+  names (the engine imports them as a target calls them), and the `@zuke/core`
+  they resolve, with integrity hashes. The launchers run the engine with
+  `--lock=deno.lock --frozen`, so a release that is missing from the lock or
+  differs from its hash fails the run instead of being fetched. The gate's
+  `lock_check` fails when the lock is absent, misses a release, or differs
+  from the commit.
 - **No shell strings.** Every subprocess a build runs goes through the engine as
   a discrete argv array; the SDK never builds a shell command line.
 - **Loopback only, per-run token.** The worker connects to the engine on

@@ -174,13 +174,21 @@ Name every test module `test_*.py`; pytest discovers nothing else.
 | Vendor the tool spec        | `./zuke vendor_spec --engine-repo <checkout> --engine-tag <tag>` |
 | Regenerate the facades      | `./zuke facades` (`facades_check` verifies they are current) |
 | Regenerate `uv.lock`        | `uv lock`                                                  |
+| Regenerate `deno.lock`      | `./zuke lock` (`vendor_spec` relocks; `lock_check` is in the gate) |
 | Publish a cut release       | `./zuke publish` (the `release` workflow runs it on `main`) |
 
 `./zuke` (`./zuke.ps1` on Windows) runs `@zuke/engine` at the version
 `zuke.json` pins, which starts `build.py` as its worker; every command a target
 runs goes through the engine. The lock is part of the gate: CI runs
 `uv sync --locked`, so a change to `pyproject.toml` must come with a
-regenerated `uv.lock` in the same commit. `.github/workflows/ci.yml` is
+regenerated `uv.lock` in the same commit. The engine side is locked too:
+`deno.lock` pins the engine, every wrapper release `spec/engine.json` names and
+the `@zuke/core` they resolve, and the launchers run frozen against it, so a
+release missing from the lock fails the run. `./zuke lock` rewrites it (and
+`vendor_spec` does so itself); after bumping `zuke.json`'s engine, delete
+`deno.lock` first, since the frozen launcher cannot start an engine the lock
+does not name, then run `./zuke lock`. `lock_check` fails the gate when the lock
+is absent, misses a release, or differs from the commit. `.github/workflows/ci.yml` is
 generated from `build.py`'s `ci_workflow` field: edit the field, run
 `./zuke generate-ci`, and commit both; `.github/workflows/ai-review.yml` is
 generated the same way from its `ai_review` field, and
@@ -194,6 +202,7 @@ zuke.json                 # names the worker command and the @zuke/engine versio
 zuke, zuke.ps1            # the bootstrap launchers, copied from the engine repository
 pyproject.toml            # package metadata, the dev tools, tool config
 uv.lock                   # the locked development environment
+deno.lock                 # the engine, the wrappers and @zuke/core, frozen; ./zuke lock rewrites it
 src/zuke/                 # the package (src layout): the peer, the worker loop, the authoring surface, the contexts
 src/zuke/tools/           # the generated facades, one module per engine wrapper; never edited by hand
 spec/                     # the engine's tool spec and the wrappers' versions, vendored at a tag
