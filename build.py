@@ -346,9 +346,7 @@ class Zuke(Build):
         .executes(lambda ctx: AiTasks.preflight(ctx, reviewers))
     )
     dist = (
-        target()
-        .description("Build the sdist and the wheel into dist/")
-        .executes(dist)
+        target().description("Build the sdist and the wheel into dist/").executes(dist)
     )
     vendor_cases = (
         target()
