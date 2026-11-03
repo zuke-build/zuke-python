@@ -35,7 +35,7 @@ from zuke._guard import is_list, record, string
 from zuke._reference import reference
 from zuke.tools.ai import AiTasks, Reviewer, ReviewSettings
 from zuke.tools.deno import DenoTasks
-from zuke.tools.gh import GhTasks
+from zuke.tools.gh import GhAppTokenSettings, GhTasks
 from zuke.tools.git import GitTasks
 
 UV = ("uv", "run")
@@ -339,38 +339,36 @@ def reviewers(r: ReviewSettings, token: str | None = None) -> ReviewSettings:
     )
 
 
-async def review_token(ctx: Context) -> str | None:
-    """The ``zuke-build`` App's installation token, when its credentials are set.
+async def app_token(ctx: Context, repository: str, *write: str) -> str | None:
+    """A ``zuke-build`` App installation token, when its credentials are set.
+
+    The token is narrowed to one ``zuke-build`` repository and write access to
+    the ``write`` permissions. Without the credentials, as locally and on a
+    fork, there is none.
+    """
+    app, key = Zuke.app_id.value, Zuke.app_key.value
+    if app is None or key is None:
+        return None
+
+    def scoped(s: GhAppTokenSettings) -> GhAppTokenSettings:
+        s = s.app_id(app).private_key(key).owner("zuke-build").repositories(repository)
+        for permission in write:
+            s = s.permission(permission, "write")
+        return s
+
+    return string(await GhTasks.app_token(ctx, scoped), "token", "appToken")
+
+
+async def review(ctx: Context) -> None:
+    """Run both reviewers, posting as the App when it can.
 
     Posting as the App makes the assessments come from ``zuke-build[bot]``,
     the account a maintainer addresses, and lets the reviewer resolve the
     threads it answers: GitHub allows that to repository write access, which
     for an installation token is ``contents: write``, and refuses the Actions
-    token. The token is narrowed to this repository and what a review
-    writes. Without the credentials, as locally and on a fork, there is
-    none, and the reviews post with ``GITHUB_TOKEN``.
+    token. Without the App, the reviews post with ``GITHUB_TOKEN``.
     """
-    app, key = Zuke.app_id.value, Zuke.app_key.value
-    if app is None or key is None:
-        return None
-    minted = await GhTasks.app_token(
-        ctx,
-        lambda s: (
-            s.app_id(app)
-            .private_key(key)
-            .owner("zuke-build")
-            .repositories("zuke-python")
-            .permission("pull_requests", "write")
-            .permission("issues", "write")
-            .permission("contents", "write")
-        ),
-    )
-    return string(minted, "token", "appToken")
-
-
-async def review(ctx: Context) -> None:
-    """Run both reviewers, posting as the App when it can."""
-    token = await review_token(ctx)
+    token = await app_token(ctx, "zuke-python", "pull_requests", "issues", "contents")
     await AiTasks.review(ctx, lambda r: reviewers(r, token))
 
 
@@ -411,13 +409,16 @@ async def sync_website(ctx: Context) -> None:
     website, write the reference where it reads it, push a branch per release,
     open the pull request and enable auto-merge, so the website's own build
     check decides whether it lands. ``GITHUB_TOKEN`` cannot push to another
-    repository, so this takes ``WEBSITE_SYNC_TOKEN``, a token with contents and
-    pull-requests write on the website; without one, as locally or on a fork,
-    the sync is skipped.
+    repository, so this mints a ``zuke-build`` App token scoped to the website
+    with contents and pull-requests write, what the engine repository's sync
+    requests; ``WEBSITE_SYNC_TOKEN``, when set, is used instead. With neither,
+    as locally or on a fork, the sync is skipped.
     """
-    token = os.environ.get("WEBSITE_SYNC_TOKEN", "")
+    token = os.environ.get("WEBSITE_SYNC_TOKEN") or await app_token(
+        ctx, "zuke-build.github.io", "contents", "pull_requests"
+    )
     if not token:
-        await ctx.log("WEBSITE_SYNC_TOKEN is not set: skipping the website sync")
+        await ctx.log("no App credentials or WEBSITE_SYNC_TOKEN: skipping the sync")
         return
     # The token rides as a one-off header rather than in the remote URL, so
     # git never writes it to .git/config; both spellings are redacted.
@@ -529,9 +530,9 @@ class Zuke(Build):
         .env("OPENAI_API_KEY")
         .secret()
     )
-    app_id = parameter("the id of the zuke-build GitHub App the reviews post as").env(
-        "ZUKE_BUILD_APP_ID"
-    )
+    app_id = parameter(
+        "the id of the zuke-build GitHub App the review and sync use"
+    ).env("ZUKE_BUILD_APP_ID")
     app_key = (
         parameter("the private key, PEM, of the zuke-build GitHub App")
         .env("ZUKE_BUILD_APP_KEY")
@@ -762,7 +763,8 @@ class Zuke(Build):
                         "if": "steps.release.outputs.release_created",
                         "run": "./zuke sync_website",
                         "env": {
-                            "WEBSITE_SYNC_TOKEN": "${{ secrets.WEBSITE_SYNC_TOKEN }}"
+                            "ZUKE_BUILD_APP_ID": "${{ secrets.ZUKE_BUILD_APP_ID }}",
+                            "ZUKE_BUILD_APP_KEY": "${{ secrets.ZUKE_BUILD_APP_KEY }}",
                         },
                     },
                 ],

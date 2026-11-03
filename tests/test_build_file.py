@@ -269,7 +269,8 @@ def test_the_release_workflow_publishes_a_cut_release_from_main() -> None:
     # The website sync runs after the upload, so a failed sync never holds it.
     assert is_record(rest[-1]) and rest[-1]["run"] == "./zuke sync_website"
     assert rest[-1]["env"] == {
-        "WEBSITE_SYNC_TOKEN": "${{ secrets.WEBSITE_SYNC_TOKEN }}"
+        "ZUKE_BUILD_APP_ID": "${{ secrets.ZUKE_BUILD_APP_ID }}",
+        "ZUKE_BUILD_APP_KEY": "${{ secrets.ZUKE_BUILD_APP_KEY }}",
     }
 
 
@@ -557,7 +558,48 @@ async def test_sync_website_is_skipped_without_a_token(
 
     await run_target("sync_website", {"log": log, "tool.call": tool_call})
     assert calls == []
-    assert "skipping the website sync" in str(logged)
+    assert "skipping the sync" in str(logged)
+
+
+async def test_sync_website_mints_a_website_token_from_the_app(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("WEBSITE_SYNC_TOKEN", raising=False)
+    calls: list[dict[str, object]] = []
+    secrets: list[object] = []
+
+    async def tool_call(params: object) -> object:
+        assert is_record(params)
+        calls.append(params)
+        if params["package"] == "gh":
+            return {"token": "ghs_site", "expiresAt": "", "installationId": 1}
+        # An empty status ends the sync before the push.
+        return {"code": 0, "stdout": "", "stderr": ""}
+
+    async def secret(params: object) -> object:
+        secrets.append(params)
+        return None
+
+    await run_target(
+        "sync_website",
+        {
+            "tool.call": tool_call,
+            "secret.register": secret,
+            "log": lambda _: asyncio.sleep(0),
+        },
+        {"app_id": "42", "app_key": "PEM"},
+    )
+    mint = calls[0]
+    assert (mint["package"], mint["task"]) == ("gh", "appToken")
+    assert configure_calls(mint) == [
+        ["appId", ["42"]],
+        ["privateKey", ["PEM"]],
+        ["owner", ["zuke-build"]],
+        ["repositories", ["zuke-build.github.io"]],
+        ["permission", ["contents", "write"]],
+        ["permission", ["pull_requests", "write"]],
+    ]
+    assert next(s["value"] for s in secrets if is_record(s)) == "ghs_site"
 
 
 @pytest.mark.parametrize(
