@@ -130,8 +130,10 @@ REVIEW_CRITERIA = (
 REVIEW_SECRETS = {
     "OPENAI_API_KEY": "${{ secrets.OPENAI_API_KEY }}",
     "GITHUB_TOKEN": "${{ secrets.GITHUB_TOKEN }}",
+    "ZUKE_BUILD_APP_ID": "${{ secrets.ZUKE_BUILD_APP_ID }}",
+    "ZUKE_BUILD_APP_KEY": "${{ secrets.ZUKE_BUILD_APP_KEY }}",
 }
-"""What a review step holds: the provider's key and the token the comments post with."""
+"""What a review step holds: the provider's key, and the tokens to post with."""
 COMMAND_ENV = {
     "GITHUB_TOKEN": "${{ secrets.GITHUB_TOKEN }}",
     "ZUKE_REVIEW_PR": "${{ github.event.issue.number }}",
@@ -303,18 +305,21 @@ async def facades_check(ctx: Context) -> None:
     await ctx.log("zuke.tools matches the vendored spec")
 
 
-def reviewer(s: Reviewer) -> Reviewer:
+def reviewer(s: Reviewer, token: str | None) -> Reviewer:
     """What both reviewers share: the provider, the diff, the depth, the discussion.
 
     The key is the ``openai_key`` parameter when it is set; without it the
     review is skipped and says so, as on a local run. Comments are appended,
     so earlier assessments and their finding ids stay on the thread, and a
-    maintainer contests a finding by replying with its id quoted.
+    maintainer contests a finding by replying with its id quoted. They post
+    with ``token`` when there is one, and with ``GITHUB_TOKEN`` otherwise.
     """
     key = Zuke.openai_key.value
     s = s.provider("openai").skip_if_key_missing()
     if key is not None:
         s = s.api_key(key)
+    if token is not None:
+        s = s.comment_token(token)
     return (
         s.comment("append")
         .diff(lambda d: d.base(REVIEW_BASE))
@@ -327,11 +332,46 @@ def reviewer(s: Reviewer) -> Reviewer:
     )
 
 
-def reviewers(r: ReviewSettings) -> ReviewSettings:
+def reviewers(r: ReviewSettings, token: str | None = None) -> ReviewSettings:
     """The two reviewers this repository's pull requests get: security, then quality."""
-    return r.security(lambda s: reviewer(s).file_context()).generic(
-        lambda s: reviewer(s).criteria(REVIEW_CRITERIA)
+    return r.security(lambda s: reviewer(s, token).file_context()).generic(
+        lambda s: reviewer(s, token).criteria(REVIEW_CRITERIA)
     )
+
+
+async def review_token(ctx: Context) -> str | None:
+    """The ``zuke-build`` App's installation token, when its credentials are set.
+
+    Posting as the App makes the assessments come from ``zuke-build[bot]``,
+    the account a maintainer addresses, and lets the reviewer resolve the
+    threads it answers: GitHub allows that to repository write access, which
+    for an installation token is ``contents: write``, and refuses the Actions
+    token. The token is narrowed to this repository and what a review
+    writes. Without the credentials, as locally and on a fork, there is
+    none, and the reviews post with ``GITHUB_TOKEN``.
+    """
+    app, key = Zuke.app_id.value, Zuke.app_key.value
+    if app is None or key is None:
+        return None
+    minted = await GhTasks.app_token(
+        ctx,
+        lambda s: (
+            s.app_id(app)
+            .private_key(key)
+            .owner("zuke-build")
+            .repositories("zuke-python")
+            .permission("pull_requests", "write")
+            .permission("issues", "write")
+            .permission("contents", "write")
+        ),
+    )
+    return string(minted, "token", "appToken")
+
+
+async def review(ctx: Context) -> None:
+    """Run both reviewers, posting as the App when it can."""
+    token = await review_token(ctx)
+    await AiTasks.review(ctx, lambda r: reviewers(r, token))
 
 
 async def publish(ctx: Context) -> None:
@@ -489,6 +529,14 @@ class Zuke(Build):
         .env("OPENAI_API_KEY")
         .secret()
     )
+    app_id = parameter("the id of the zuke-build GitHub App the reviews post as").env(
+        "ZUKE_BUILD_APP_ID"
+    )
+    app_key = (
+        parameter("the private key, PEM, of the zuke-build GitHub App")
+        .env("ZUKE_BUILD_APP_KEY")
+        .secret()
+    )
 
     fmt = (
         target()
@@ -551,7 +599,7 @@ class Zuke(Build):
         target()
         .description("AI review of the diff: security and code quality")
         .depends_on(review_base)
-        .executes(lambda ctx: AiTasks.review(ctx, reviewers))
+        .executes(review)
     )
     review_preflight = (
         target()

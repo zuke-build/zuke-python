@@ -36,6 +36,8 @@ jobs:
         env:
           OPENAI_API_KEY: "${{ secrets.OPENAI_API_KEY }}"
           GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+          ZUKE_BUILD_APP_ID: "${{ secrets.ZUKE_BUILD_APP_ID }}"
+          ZUKE_BUILD_APP_KEY: "${{ secrets.ZUKE_BUILD_APP_KEY }}"
   commandReview:
     name: AI review on command
     runs-on: ubuntu-latest
@@ -73,6 +75,8 @@ jobs:
         env:
           OPENAI_API_KEY: "${{ secrets.OPENAI_API_KEY }}"
           GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+          ZUKE_BUILD_APP_ID: "${{ secrets.ZUKE_BUILD_APP_ID }}"
+          ZUKE_BUILD_APP_KEY: "${{ secrets.ZUKE_BUILD_APP_KEY }}"
           ZUKE_REVIEW_PR: "${{ github.event.issue.number }}"
           ZUKE_REVIEW_COMMENT: "${{ github.event.comment.id }}"
           ZUKE_REVIEW_ACTOR: "${{ github.event.comment.user.login }}"
