@@ -242,7 +242,9 @@ def _symbols(module: ast.Module) -> dict[str, ApiSymbol]:
             }
         elif isinstance(node, ast.TypeAlias):
             name = ast.unparse(node.name)
-            found[name] = _alias(name, ast.unparse(node), module.body, index)
+            found[name] = _alias(
+                name, "typeAlias", ast.unparse(node), module.body, index
+            )
         elif (
             isinstance(node, ast.Assign)
             and len(node.targets) == 1
@@ -250,14 +252,24 @@ def _symbols(module: ast.Module) -> dict[str, ApiSymbol]:
         ):
             name = node.targets[0].id
             signature = f"{name} = {ast.unparse(node.value)}"
-            found[name] = _alias(name, signature, module.body, index)
+            # The value's shape, not the name's case, tells an alias from a constant.
+            kind: Kind = (
+                "typeAlias" if isinstance(node.value, _TYPE_SHAPES) else "variable"
+            )
+            found[name] = _alias(name, kind, signature, module.body, index)
     return found
 
 
-def _alias(name: str, signature: str, body: list[ast.stmt], index: int) -> ApiSymbol:
+_TYPE_SHAPES = (ast.BinOp, ast.Subscript, ast.Name, ast.Attribute)
+"""What an assigned type alias's value looks like: ``str | int``, ``dict[str, X]``."""
+
+
+def _alias(
+    name: str, kind: Kind, signature: str, body: list[ast.stmt], index: int
+) -> ApiSymbol:
     return {
         "name": name,
-        "kind": "typeAlias" if name[:1].isupper() else "variable",
+        "kind": kind,
         "doc": _attribute_doc(body, index),
         "signature": signature,
         "deprecated": False,
@@ -276,8 +288,29 @@ def _by_name(symbols: list[ApiSymbol]) -> list[ApiSymbol]:
     return sorted(symbols, key=lambda s: (s["name"].lower(), s["name"]))
 
 
+def _exported(module: ast.Module) -> set[str]:
+    """The names a module's ``__all__`` lists, or none when it has no list."""
+    for node in module.body:
+        if (
+            isinstance(node, ast.Assign)
+            and ast.unparse(node.targets[0]) == "__all__"
+            and isinstance(node.value, ast.List)
+        ):
+            return {
+                e.value
+                for e in node.value.elts
+                if isinstance(e, ast.Constant) and isinstance(e.value, str)
+            }
+    return set()
+
+
 def _root_package(root: Path) -> ApiPackage:
-    """``zuke``: each name ``__init__`` imports from a module of the package."""
+    """``zuke``: each name ``__init__`` imports from a module of the package.
+
+    Raises ``ValueError`` when ``__all__`` exports a name no such import
+    defines, so a re-export the reader cannot follow fails the generation
+    rather than vanishing from the reference.
+    """
     init = _parse(root / "__init__.py")
     symbols: list[ApiSymbol] = []
     for node in init.body:
@@ -286,6 +319,12 @@ def _root_package(root: Path) -> ApiPackage:
             module = str(node.module).replace(".", "/")
             defined = _symbols(_parse(root.parent / f"{module}.py"))
             symbols.extend(defined[alias.name] for alias in node.names)
+    missing = _exported(init) - {"__version__"} - {s["name"] for s in symbols}
+    if missing:
+        raise ValueError(
+            f"zuke/__init__.py exports {', '.join(sorted(missing))} without an "
+            "absolute import from a zuke module, so the reference cannot document it"
+        )
     return {
         "name": "zuke",
         "dir": "zuke",

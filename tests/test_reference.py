@@ -7,6 +7,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 import zuke
 from zuke._reference import (
     SCHEMA,
@@ -139,7 +141,9 @@ Its second paragraph is not the summary.
 
 from __future__ import annotations
 
-from zuke.core import Thing, VERSION, helper, Alias, lower
+from zuke.core import Thing, VERSION, helper, Alias, lower, pair
+
+__all__ = ["Thing", "VERSION", "helper", "Alias", "lower", "pair", "__version__", 1]
 
 __version__ = "0.0.0"
 '''
@@ -153,6 +157,8 @@ type Alias = int | str
 VERSION = "1"
 
 lower = 3
+
+pair = tuple[int, int]
 
 A = B = 2
 
@@ -238,7 +244,12 @@ def test_the_edges_of_a_fake_package(tmp_path: Path) -> None:
     )
     lower = _symbol(root, "lower")
     assert (lower["kind"], lower["doc"]) == ("variable", "")
-    assert _symbol(root, "VERSION")["doc"] == ""
+    # The value's shape decides the kind, whatever the name's case.
+    assert (_symbol(root, "VERSION")["kind"], _symbol(root, "VERSION")["doc"]) == (
+        "variable",
+        "",
+    )
+    assert _symbol(root, "pair")["kind"] == "typeAlias"
     helper = _symbol(root, "helper")
     assert helper["signature"] == "def helper(x, /, y: int=2) -> None"
     assert helper["doc"] == "Help with `Thing`."
@@ -305,3 +316,24 @@ def test_the_edges_of_a_fake_package(tmp_path: Path) -> None:
     assert tool["summary"] == ""
     assert [s["name"] for s in tool["symbols"]] == ["Empty", "task"]
     assert "members" not in _symbol(tool, "Empty")
+
+
+def test_an_export_the_reader_cannot_follow_fails_the_generation(
+    tmp_path: Path,
+) -> None:
+    root = _fake(tmp_path)
+    init = root / "__init__.py"
+    init.write_text(
+        init.read_text().replace('"pair",', '"pair", "Lost",')
+        + "from .core import Lost\n"
+    )
+    with pytest.raises(ValueError, match="exports Lost without an absolute import"):
+        reference(root, "0.1.0")
+
+
+def test_a_module_without_a_list_of_exports_is_not_checked(tmp_path: Path) -> None:
+    root = _fake(tmp_path)
+    init = root / "__init__.py"
+    text = init.read_text().replace("__all__ = [", "__all__ = tuple([")
+    init.write_text(text.replace(", 1]\n", ", 1])\n"))
+    assert reference(root, "0.1.0")["packages"][0]["name"] == "zuke"

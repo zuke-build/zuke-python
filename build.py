@@ -354,7 +354,8 @@ def write_reference(path: Path) -> None:
     """Write the package's API reference, in the website's ``api.json`` shape."""
     path.parent.mkdir(parents=True, exist_ok=True)
     text = json.dumps(reference(PACKAGE, __version__), indent=2, ensure_ascii=False)
-    path.write_text(text + "\n", encoding="utf-8")
+    # LF everywhere, so the file a Windows run writes diffs to nothing.
+    path.write_text(text + "\n", encoding="utf-8", newline="\n")
 
 
 async def api_reference(ctx: Context) -> None:

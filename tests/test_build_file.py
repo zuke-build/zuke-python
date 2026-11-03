@@ -478,7 +478,7 @@ async def test_api_reference_writes_the_reference(
     written = tmp_path / ".zuke" / "api.json"
     monkeypatch.setattr(build, "REFERENCE", written)
     await run_target("api_reference", {"log": lambda _: asyncio.sleep(0)})
-    reference = json.loads(written.read_text())
+    reference = json.loads(written.read_text(encoding="utf-8"))
     assert reference["generated"] == f"zuke@{build.__version__}"
     assert reference["packages"][0]["name"] == "zuke"
 
