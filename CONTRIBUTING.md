@@ -9,11 +9,11 @@ By participating, you agree to abide by our
 [Code of Conduct](./CODE_OF_CONDUCT.md).
 
 > [!NOTE]
-> The SDK is gated on the engine: until the Zuke engine can host a worker written
-> in another language, this repository is scaffolding, and its build is a plain
-> workflow rather than a Zuke build. See the
-> [status section of `AGENTS.md`](./AGENTS.md#status-and-sequencing) before
-> proposing SDK code.
+> The engine, the protocol and every tool wrapper live in the
+> [main repository](https://github.com/zuke-build/zuke). A change to any of
+> them lands there first and reaches this one through the pinned engine
+> release and the vendored tool spec; see
+> [how the SDK relates to the engine](./AGENTS.md#how-the-sdk-relates-to-the-engine).
 
 > [!IMPORTANT]
 > **Every change starts with an issue.** Before opening a pull request — for a

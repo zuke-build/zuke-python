@@ -24,9 +24,9 @@ repository, is:
    [phase 1](https://github.com/zuke-build/zuke/issues/903); `@zuke/engine`
    1.0.0 speaks protocol v1.
 2. Then this package gets the authoring surface, the worker loop, and the
-   generated tool facades, and its own build becomes a Zuke build. In progress,
-   slice by slice, under
-   [#3](https://github.com/zuke-build/zuke-python/issues/3).
+   generated tool facades, and its own build becomes a Zuke build. Done, slice
+   by slice, under [#3](https://github.com/zuke-build/zuke-python/issues/3);
+   the package is published on PyPI as `zuke` from 1.0.0.
 
 The worker loop (`_rpc.py`, `_worker.py`), the authoring surface (`_dsl.py`,
 `_build.py`, `_ci.py`, `_settings.py`, `_run.py`), the body and service
