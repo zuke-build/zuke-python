@@ -88,6 +88,10 @@ version `zuke.json` pins: the launcher bootstraps Deno, the engine starts
 `build.py` as its worker, and every command a target runs goes through the
 engine. `./zuke.ps1` is the launcher on Windows.
 
+The same AI reviewers the engine repository runs review this repository's
+pull requests, from `build.py`'s `review` target through `zuke.tools.ai`: the
+build the SDK ships is reviewed by the SDK.
+
 See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for the workflow and
 [`AGENTS.md`](./AGENTS.md) for the rules this repository is built by.
 

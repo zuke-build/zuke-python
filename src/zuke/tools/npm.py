@@ -315,7 +315,7 @@ class NpmRunSettings(NpmWorkspaceSettings):
         """Do not fail when the script is missing (`--if-present`)."""
         return self._record("ifPresent")
 
-    def script_args(self, *args: object) -> Self:
+    def script_args(self, *args: str | float) -> Self:
         """Arguments forwarded to the script (after `--`)."""
         return self._record("scriptArgs", *args)
 
@@ -323,7 +323,7 @@ class NpmRunSettings(NpmWorkspaceSettings):
 class NpmTestSettings(NpmWorkspaceSettings):
     """Settings for `npm test`."""
 
-    def test_args(self, *args: object) -> Self:
+    def test_args(self, *args: str | float) -> Self:
         """Arguments forwarded to the test script (after `--`)."""
         return self._record("testArgs", *args)
 
@@ -349,7 +349,7 @@ class NpmExecSettings(NpmWorkspaceSettings):
         """
         return self._record("no")
 
-    def exec_args(self, *args: object) -> Self:
+    def exec_args(self, *args: str | float) -> Self:
         """Arguments forwarded to the command (after `--`)."""
         return self._record("execArgs", *args)
 
@@ -647,7 +647,7 @@ class NpmInitSettings(NpmWorkspaceSettings):
         """Scope the created package (`--scope=<@scope>`)."""
         return self._record("scope", name)
 
-    def init_args(self, *args: object) -> Self:
+    def init_args(self, *args: str | float) -> Self:
         """Arguments forwarded to the initializer (after `--`)."""
         return self._record("initArgs", *args)
 

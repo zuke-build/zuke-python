@@ -1263,7 +1263,7 @@ class GitMergeTreeSettings(GitSettings):
 class GitRunSettings(GitSettings):
     """Settings for an arbitrary `git` command not covered by a typed task."""
 
-    def command(self, *parts: object) -> Self:
+    def command(self, *parts: str | float) -> Self:
         """The subcommand and its arguments, e.g. `command("bisect", "start")`."""
         return self._record("command", *parts)
 

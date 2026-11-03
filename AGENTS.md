@@ -156,6 +156,7 @@ Name every test module `test_*.py`; pytest discovers nothing else.
 | Format / check formatting   | `./zuke fmt` / `./zuke fmt_check`                          |
 | Lint                        | `./zuke lint`                                              |
 | Pre-commit gate, same as CI | `./zuke ci`                                                |
+| AI review of the diff       | `./zuke review` (skipped without `OPENAI_API_KEY`)          |
 | Regenerate the CI workflow  | `./zuke generate-ci` (`--check` verifies it is current)    |
 | Vendor the conformance cases | `./zuke vendor_cases --engine-repo <checkout> --engine-tag <tag>` |
 | Vendor the tool spec        | `./zuke vendor_spec --engine-repo <checkout> --engine-tag <tag>` |
@@ -168,7 +169,8 @@ runs goes through the engine. The lock is part of the gate: CI runs
 `uv sync --locked`, so a change to `pyproject.toml` must come with a
 regenerated `uv.lock` in the same commit. `.github/workflows/ci.yml` is
 generated from `build.py`'s `ci_workflow` field: edit the field, run
-`./zuke generate-ci`, and commit both.
+`./zuke generate-ci`, and commit both; `.github/workflows/ai-review.yml` is
+generated the same way from its `ai_review` field.
 
 ## Repository layout
 
@@ -183,6 +185,7 @@ src/zuke/tools/           # the generated facades, one module per engine wrapper
 spec/                     # the engine's tool spec and the wrappers' versions, vendored at a tag
 tests/                    # pytest suite; protocol/ replays the engine's conformance cases, vendored under cases/
 .github/workflows/ci.yml  # the gate on ubuntu, macOS and Windows, generated from build.py
+.github/workflows/ai-review.yml  # the AI review on pull requests and on command, generated from build.py
 .github/ISSUE_TEMPLATE/   # feature, bug and chore templates; blank issues are off
 AGENTS.md                 # this file; CLAUDE.md points here
 ```
@@ -201,8 +204,13 @@ AGENTS.md                 # this file; CLAUDE.md points here
   parentheses can make release-please drop the commit from the release.
 - **Pin GitHub Actions by commit SHA** with the version in a trailing comment,
   so Dependabot can bump them. Never a floating tag.
-- **Always read the reviewer comments on every PR**, the AI reviewers included
-  once they run here, and address or answer each finding, quoting its id.
+- **Always read the reviewer comments on every PR.** The AI reviewers of the
+  engine repository run here too, through `zuke.tools.ai` in `build.py`'s
+  `review` target: a security review and a code-quality review post one
+  comment per run, each finding under a short id. Address or answer each
+  finding, quoting its id; a maintainer's reply quoting an id is weighed as a
+  rebuttal on the next run, which `@zuke-build review` starts without a push,
+  and `@zuke-build accept <id> <reason>` records a finding as intended.
 - **No secrets or machine-specific paths** in the repository or commits.
 - **Update docs with code.** If behaviour changes, update `README.md` and the
   docstrings in the same PR.

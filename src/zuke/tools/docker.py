@@ -564,7 +564,7 @@ class DockerProcessSettings(DockerSettings):
         """Run as this user or `uid:gid` (`-u`/`--user`)."""
         return self._record("user", value)
 
-    def command_args(self, *args: object) -> Self:
+    def command_args(self, *args: str | float) -> Self:
         """The command and arguments to run inside the container."""
         return self._record("commandArgs", *args)
 

@@ -54,7 +54,7 @@ class PnpmDlxSettings(PnpmSettings):
         """The package providing the command (`--package=`)."""
         return self._record("package", spec)
 
-    def exec_args(self, *args: object) -> Self:
+    def exec_args(self, *args: str | float) -> Self:
         """Arguments forwarded to the command."""
         return self._record("execArgs", *args)
 
@@ -114,7 +114,7 @@ class PnpmRunSettings(PnpmSettings):
         """Do not fail when the script is missing (`--if-present`)."""
         return self._record("ifPresent")
 
-    def script_args(self, *args: object) -> Self:
+    def script_args(self, *args: str | float) -> Self:
         """Arguments forwarded to the script."""
         return self._record("scriptArgs", *args)
 

@@ -366,7 +366,7 @@ class DenoRunSettings(DenoPermissionSettings):
         """The script to run (required)."""
         return self._record("script", path)
 
-    def script_args(self, *args: object) -> Self:
+    def script_args(self, *args: str | float) -> Self:
         """Arguments passed to the script (after the script path)."""
         return self._record("scriptArgs", *args)
 
@@ -511,7 +511,7 @@ class DenoServeSettings(DenoPermissionSettings):
         """The module exporting the server's default handler (required)."""
         return self._record("script", path)
 
-    def script_args(self, *args: object) -> Self:
+    def script_args(self, *args: str | float) -> Self:
         """Arguments passed to the server module (after the module path)."""
         return self._record("scriptArgs", *args)
 
@@ -549,7 +549,7 @@ class DenoTaskSettings(DenoSettings):
         """The task name from deno.json (required)."""
         return self._record("name", value)
 
-    def task_args(self, *args: object) -> Self:
+    def task_args(self, *args: str | float) -> Self:
         """Arguments forwarded to the task."""
         return self._record("taskArgs", *args)
 
@@ -1455,7 +1455,7 @@ class DenoInstallSettings(DenoPermissionSettings):
         """The module to install, e.g. `npm:cspell@9` (required for a global install)."""
         return self._record("module", spec)
 
-    def module_args(self, *args: object) -> Self:
+    def module_args(self, *args: str | float) -> Self:
         """Arguments baked into the generated launcher, emitted after the `--`
         separator deno requires for them.
         """
@@ -1830,7 +1830,7 @@ class DenoCompileSettings(DenoPermissionSettings):
         """The entrypoint to compile (required)."""
         return self._record("script", path)
 
-    def script_args(self, *args: object) -> Self:
+    def script_args(self, *args: str | float) -> Self:
         """Arguments baked into the executable, passed after the entrypoint."""
         return self._record("scriptArgs", *args)
 

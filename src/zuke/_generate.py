@@ -217,9 +217,8 @@ def _setter(member: dict[str, object], scope: Scope) -> list[str]:
     name = string(member, "name", "setter")
     params = _params(member, scope)
     returns = record(member.get("returns"), f"{name} returns")
-    recorded = ", ".join(
-        [json.dumps(name), *(f"*{p.name}" if p.rest else p.name for p in params)]
-    )
+    # A nested lambda is recorded as the calls it makes, as a task sends one.
+    recorded = ", ".join([json.dumps(name), *(p.sent() for p in params)])
     kind = returns.get("kind")
     if kind == "self":
         result, body = annotation(returns, scope), f"return self._record({recorded})"

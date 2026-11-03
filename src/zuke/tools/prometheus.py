@@ -18,6 +18,80 @@ PACKAGE = "prometheus"
 VERSION = "1.1.1"
 
 
+class PrometheusAwsSettings(Settings):
+    """Settings for `PrometheusConnectionSettings.sigv4(...)`."""
+
+    def region(self, region: str) -> Self:
+        """The workspace's region, such as `us-east-1`; defaults to `AWS_REGION`,
+        then `AWS_DEFAULT_REGION`.
+        """
+        return self._record("region", region)
+
+    def profile(self, name: str) -> Self:
+        """Read static keys from this profile of the shared credentials and config
+        files (`~/.aws/credentials`, `~/.aws/config`) instead of searching the
+        default chain.
+        """
+        return self._record("profile", name)
+
+    def access_key(
+        self,
+        access_key_id: str,
+        secret_access_key: str,
+        session_token: str | None = None,
+    ) -> Self:
+        """Sign with this access key instead of searching the default chain."""
+        return self._record(
+            "accessKey", access_key_id, secret_access_key, session_token
+        )
+
+
+class PrometheusAzureSettings(Settings):
+    """Settings for `PrometheusConnectionSettings.azure(...)`."""
+
+    def scope(self, scope: str) -> Self:
+        """The scope to request, replacing `https://prometheus.monitor.azure.com/.default`."""
+        return self._record("scope", scope)
+
+    def tenant_id(self, id: str) -> Self:
+        """The Microsoft Entra tenant (directory) id; defaults to `AZURE_TENANT_ID`."""
+        return self._record("tenantId", id)
+
+    def client_id(self, id: str) -> Self:
+        """The application's client id — or, for a user-assigned managed identity,
+        the identity's; defaults to `AZURE_CLIENT_ID`.
+        """
+        return self._record("clientId", id)
+
+    def authority_host(self, url: str) -> Self:
+        """The Microsoft Entra authority, such as `https://login.microsoftonline.us`
+        for Azure Government; defaults to `AZURE_AUTHORITY_HOST`, then
+        `https://login.microsoftonline.com`.
+        """
+        return self._record("authorityHost", url)
+
+    def client_secret(self, secret: str | None = None) -> Self:
+        """Use a service principal's client secret (the client-credentials grant).
+        The secret defaults to `AZURE_CLIENT_SECRET`.
+        """
+        return self._record("clientSecret", secret)
+
+    def workload_identity(self, token_file: str | None = None) -> Self:
+        """Use workload identity federation: the Kubernetes service-account token
+        in `tokenFile` (default `AZURE_FEDERATED_TOKEN_FILE`) is the client
+        assertion, read afresh on every token request since it is rotated.
+        """
+        return self._record("workloadIdentity", token_file)
+
+    def managed_identity(self, client_id: str | None = None) -> Self:
+        """Use the managed identity of the VM, App Service or Functions app the
+        build runs on. Pass a user-assigned identity's client id, or leave it
+        out for `clientId(...)` / `AZURE_CLIENT_ID`, and failing those the
+        system-assigned identity.
+        """
+        return self._record("managedIdentity", client_id)
+
+
 class PrometheusConnectionSettings(Settings):
     """The connection half of every Prometheus call's settings."""
 
@@ -63,6 +137,72 @@ class PrometheusConnectionSettings(Settings):
         """
         return self._record("secretHeader", name, value)
 
+    def google(
+        self,
+        configure: Callable[[PrometheusGoogleSettings], PrometheusGoogleSettings]
+        | None = None,
+    ) -> Self:
+        """Authenticate to Google Cloud Managed Service for Prometheus with an
+        OAuth access token from Application Default Credentials — no `gcloud`
+        needed. The search order is `credentialsFile(...)`, else the file
+        `GOOGLE_APPLICATION_CREDENTIALS` names; then gcloud's
+        `application_default_credentials.json`; then the GCE / GKE metadata
+        server. A file may be a `service_account` key, an `authorized_user`
+        gcloud login, or an `external_account` workload identity federation
+        configuration with a `file` or `url` subject-token source. The scope
+        defaults to `monitoring.read`; the token is cached until shortly before
+        it expires.
+
+        ```ts
+        s.url("https://monitoring.googleapis.com/v1/projects/my-project/location/global/prometheus")
+          .google()
+        ```
+        """
+        return self._record("google", configured(PrometheusGoogleSettings(), configure))
+
+    def azure(
+        self,
+        configure: Callable[[PrometheusAzureSettings], PrometheusAzureSettings]
+        | None = None,
+    ) -> Self:
+        """Authenticate to Azure Monitor managed service for Prometheus with a
+        Microsoft Entra ID token for
+        `https://prometheus.monitor.azure.com/.default` — no `az` needed. Unless
+        a credential is chosen, the first the environment configures is used:
+        client secret (`AZURE_TENANT_ID`, `AZURE_CLIENT_ID`,
+        `AZURE_CLIENT_SECRET`), then workload identity (`AZURE_TENANT_ID`,
+        `AZURE_CLIENT_ID`, `AZURE_FEDERATED_TOKEN_FILE`), then managed identity
+        (App Service's `IDENTITY_ENDPOINT`, else the VM's IMDS). The token is
+        cached until shortly before it expires.
+
+        ```ts
+        s.url("https://my-amw.eastus.prometheus.monitor.azure.com")
+          .azure((a) => a.managedIdentity(clientId))
+        ```
+        """
+        return self._record("azure", configured(PrometheusAzureSettings(), configure))
+
+    def sigv4(
+        self,
+        configure: Callable[[PrometheusAwsSettings], PrometheusAwsSettings]
+        | None = None,
+    ) -> Self:
+        """Sign every request with AWS Signature Version 4 for Amazon Managed
+        Service for Prometheus (service `aps`) — no `aws` CLI needed. The region
+        is `region(...)`, else `AWS_REGION` / `AWS_DEFAULT_REGION`. Credentials
+        come from `accessKey(...)` or `profile(...)` when set, else the chain:
+        the `AWS_ACCESS_KEY_ID` environment, the shared files' profile, web
+        identity (`AWS_WEB_IDENTITY_TOKEN_FILE` + `AWS_ROLE_ARN`), the ECS / EKS
+        Pod Identity container endpoint, then EC2 IMDSv2. Configure it after any
+        other source, so it signs the headers they add.
+
+        ```ts
+        s.url("https://aps-workspaces.us-east-1.amazonaws.com/workspaces/ws-1234")
+          .sigv4((a) => a.region("us-east-1"))
+        ```
+        """
+        return self._record("sigv4", configured(PrometheusAwsSettings(), configure))
+
     def request_timeout(self, duration: str | float) -> Self:
         """How long the call may take, end to end (`"10s"`, or ms; default 30 s).
         Client-side: the query's own `timeout` parameter is separate.
@@ -74,6 +214,33 @@ class PrometheusConnectionSettings(Settings):
         one fails the call rather than being buffered whole.
         """
         return self._record("maxResponseBytes", bytes)
+
+
+class PrometheusGoogleSettings(Settings):
+    """Settings for `PrometheusConnectionSettings.google(...)`."""
+
+    def scopes(self, *scopes: str) -> Self:
+        """The OAuth scopes to request, replacing the default
+        `https://www.googleapis.com/auth/monitoring.read`. A gcloud user
+        credential (`authorized_user`) carries the scopes it was granted at
+        `gcloud auth application-default login` and ignores these.
+        """
+        return self._record("scopes", *scopes)
+
+    def credentials_file(self, path: str) -> Self:
+        """Read this credentials file — a service-account key, a gcloud user
+        credential, or a workload identity federation configuration — instead of
+        searching Application Default Credentials.
+        """
+        return self._record("credentialsFile", path)
+
+    def quota_project(self, project: str) -> Self:
+        """The project charged for the request's quota, sent as
+        `x-goog-user-project`. Defaults to the credentials file's
+        `quota_project_id`, which `gcloud auth application-default
+        set-quota-project` writes.
+        """
+        return self._record("quotaProject", project)
 
 
 class PrometheusSelectionSettings(PrometheusConnectionSettings):

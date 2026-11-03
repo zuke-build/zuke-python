@@ -1113,6 +1113,14 @@ class CloudMonitoringTimeSeriesSettings(Settings):
         """A pre-resolved OAuth access token."""
         return self._record("token", value)
 
+    def gcloud(self, configure: Callable[[GcloudSettings], GcloudSettings]) -> Self:
+        """Global gcloud flags for the default token read,
+        `gcloud auth print-access-token` — `(g) => g.account("ci@p.iam…")`, or a
+        `.runner(...)`, the seam a test answers through. Unused when a
+        token or tokenProvider is set.
+        """
+        return self._record("gcloud", configured(GcloudSettings(), configure))
+
 
 class CloudMonitoringMetricValueSettings(CloudMonitoringTimeSeriesSettings):
     """Settings for `CloudMonitoringTasks.metricValue`: a time-series read, and

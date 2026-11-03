@@ -1,0 +1,79 @@
+name: AI Review
+"on":
+  pull_request: {}
+  issue_comment:
+    types:
+      - created
+permissions:
+  contents: read
+concurrency:
+  group: "ai-review-${{ github.event.pull_request.number || github.event.issue.number }}"
+  cancel-in-progress: true
+jobs:
+  review:
+    name: AI review
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    if: "${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}"
+    timeout-minutes: 15
+    steps:
+      - name: Harden and check out with Zuke
+        uses: zuke-build/zuke@b0832247daa16321be405a10b71c022317d2c5a4 # v1.0.8
+        with:
+          egress-policy: block
+          persist-credentials: "false"
+          allowed-endpoints: "deno.land:443 dl.deno.land:443 jsr.io:443 github.com:443 api.github.com:443 codeload.github.com:443 objects.githubusercontent.com:443 release-assets.githubusercontent.com:443 pypi.org:443 files.pythonhosted.org:443 api.openai.com:443"
+      - name: Install uv
+        shell: bash
+        run: pipx install uv
+      - name: Sync the locked environment
+        shell: bash
+        run: uv sync --locked
+      - name: AI review with Zuke
+        run: ./zuke review
+        env:
+          OPENAI_API_KEY: "${{ secrets.OPENAI_API_KEY }}"
+          GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+  commandReview:
+    name: AI review on command
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    if: "${{ github.event_name == 'issue_comment' && github.event.issue.pull_request && github.event.comment.user.type != 'Bot' && (startsWith(github.event.comment.body, '@zuke-build review') || startsWith(github.event.comment.body, '@zuke-build accept')) }}"
+    timeout-minutes: 15
+    steps:
+      - name: Harden and check out with Zuke
+        uses: zuke-build/zuke@b0832247daa16321be405a10b71c022317d2c5a4 # v1.0.8
+        with:
+          egress-policy: block
+          persist-credentials: "false"
+          allowed-endpoints: "deno.land:443 dl.deno.land:443 jsr.io:443 github.com:443 api.github.com:443 codeload.github.com:443 objects.githubusercontent.com:443 release-assets.githubusercontent.com:443 pypi.org:443 files.pythonhosted.org:443 api.openai.com:443"
+      - name: Install uv
+        shell: bash
+        run: pipx install uv
+      - name: Sync the locked environment
+        shell: bash
+        run: uv sync --locked
+      - name: Check the commenter may start a review
+        id: callers
+        run: ./zuke review_preflight
+        env:
+          GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+          ZUKE_REVIEW_PR: "${{ github.event.issue.number }}"
+          ZUKE_REVIEW_COMMENT: "${{ github.event.comment.id }}"
+          ZUKE_REVIEW_ACTOR: "${{ github.event.comment.user.login }}"
+          ZUKE_REVIEW_ROLE: write
+        continue-on-error: true
+      - name: AI review with Zuke
+        if: "steps.callers.outcome == 'success'"
+        run: ./zuke review
+        env:
+          OPENAI_API_KEY: "${{ secrets.OPENAI_API_KEY }}"
+          GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+          ZUKE_REVIEW_PR: "${{ github.event.issue.number }}"
+          ZUKE_REVIEW_COMMENT: "${{ github.event.comment.id }}"
+          ZUKE_REVIEW_ACTOR: "${{ github.event.comment.user.login }}"
+          ZUKE_REVIEW_ROLE: write

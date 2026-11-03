@@ -93,6 +93,53 @@ class SignPathDownloadSettings(SignPathStatusSettings):
         return self._record("output", path)
 
 
+class SignPathGitHubOriginSettings(Settings):
+    """Where the artifact to sign lives in GitHub Actions. Only the artifact id is
+    required: the run, repository and token default to the workflow's own
+    environment (`GITHUB_RUN_ID`, `GITHUB_REPOSITORY`, `GITHUB_TOKEN`).
+
+    ```ts
+    await SignPathTasks.submit((s) =>
+      s.projectSlug("zuke").signingPolicySlug("release-signing")
+        .gitHubOrigin((g) => g.artifactId(artifactId).token(githubToken))
+        .output("dist/signed/zuke.zip")
+    );
+    ```
+    """
+
+    def artifact_id(self, id: str | float) -> Self:
+        """The id of the artifact `actions/upload-artifact` (v4 or later) uploaded —
+        its `artifact-id` step output. Required.
+        """
+        return self._record("artifactId", id)
+
+    def run_id(self, id: str | float) -> Self:
+        """The workflow run the artifact belongs to; defaults to `GITHUB_RUN_ID`."""
+        return self._record("runId", id)
+
+    def repository(self, name: str) -> Self:
+        """The repository, `owner/name`; defaults to `GITHUB_REPOSITORY`."""
+        return self._record("repository", name)
+
+    def token(self, value: str) -> Self:
+        """The GitHub token the connector reads the run and downloads the artifact
+        with — the workflow's `GITHUB_TOKEN` (with `actions: read` and
+        `contents: read`) is enough. Defaults to the `GITHUB_TOKEN` environment
+        variable. It is masked out of every message, like the API token.
+
+        The workflow's own token stops working when the workflow ends, so the
+        task must wait for SignPath to fetch the artifact; `submit` always waits.
+        """
+        return self._record("token", value)
+
+    def connector_url(self, url: str) -> Self:
+        """The SignPath GitHub connector to submit through; SignPath's hosted
+        GitHub.com one by default. Only a self-hosted GitHub Enterprise Server
+        needs another. It carries the API token, so it must be `https:`.
+        """
+        return self._record("connectorUrl", url)
+
+
 class SigntoolVerifySettings(ToolSettings):
     """Settings for `signtool verify`."""
 
@@ -197,6 +244,20 @@ class SignPathSubmitSettings(SignPathConnectionSettings):
         verify, so for it use gitHubOrigin instead.
         """
         return self._record("artifact", path)
+
+    def git_hub_origin(
+        self,
+        configure: Callable[
+            [SignPathGitHubOriginSettings], SignPathGitHubOriginSettings
+        ],
+    ) -> Self:
+        """Have SignPath fetch the artifact from a GitHub Actions workflow run and
+        verify its origin. Exactly one of artifact and `gitHubOrigin` is
+        required.
+        """
+        return self._record(
+            "gitHubOrigin", configured(SignPathGitHubOriginSettings(), configure)
+        )
 
     def output(self, path: str) -> Self:
         """Download the signed artifact to this file once the request completes; its

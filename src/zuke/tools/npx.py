@@ -46,7 +46,7 @@ class NpxSettings(ToolSettings):
         """Ignore binaries already present in `$PATH` (`--ignore-existing`)."""
         return self._record("ignoreExisting")
 
-    def exec_args(self, *args: object) -> Self:
+    def exec_args(self, *args: str | float) -> Self:
         """Arguments forwarded to the command."""
         return self._record("execArgs", *args)
 

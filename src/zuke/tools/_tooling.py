@@ -68,7 +68,7 @@ class ToolSettings(Settings):
         """Resolve the binary from `PATH` only, ignoring any `node_modules/.bin`."""
         return self._record("fromPath")
 
-    def args(self, *extra: object) -> Self:
+    def args(self, *extra: str | float) -> Self:
         """Escape hatch: append raw arguments after all typed options."""
         return self._record("args", *extra)
 
@@ -79,7 +79,7 @@ class DynamicToolSettings(ToolSettings):
     (`cwd`, `env`, `noThrow`, `quiet`, `toolPath`, `args`).
     """
 
-    def arg(self, *values: object) -> Self:
+    def arg(self, *values: str | float) -> Self:
         """Append raw positional/argument tokens."""
         return self._record("arg", *values)
 
@@ -105,7 +105,7 @@ class SubcommandSettings(ToolSettings):
     token a discrete argv entry so command construction stays injection-free.
     """
 
-    def command(self, *parts: object) -> Self:
+    def command(self, *parts: str | float) -> Self:
         """Append command-path tokens — the group, verb, and operands — in order."""
         return self._record("command", *parts)
 
