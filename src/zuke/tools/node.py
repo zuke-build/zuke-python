@@ -82,7 +82,7 @@ class NodeRunSettings(NodeSettings):
         """The script to execute (required)."""
         return self._record("script", path)
 
-    def script_args(self, *args: object) -> Self:
+    def script_args(self, *args: str | float) -> Self:
         """Arguments passed to the script (after the script path)."""
         return self._record("scriptArgs", *args)
 

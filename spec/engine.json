@@ -1,5 +1,5 @@
 {
-  "tag": "87a4f2f5",
+  "tag": "engine-v1.2.0",
   "versions": {
     "deno": "1.5.0",
     "docs": "1.0.1",
@@ -60,6 +60,7 @@
     "tofu": "1.0.1",
     "release-please": "1.0.3",
     "security": "1.0.1",
+    "ai": "2.13.0",
     "qr": "1.2.0",
     "apple": "1.1.0",
     "google": "1.0.0",

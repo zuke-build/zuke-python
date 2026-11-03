@@ -74,7 +74,7 @@ class BunRunSettings(BunSettings):
         """The package.json script to run (required)."""
         return self._record("script", name)
 
-    def script_args(self, *args: object) -> Self:
+    def script_args(self, *args: str | float) -> Self:
         """Arguments forwarded to the script."""
         return self._record("scriptArgs", *args)
 
@@ -102,7 +102,7 @@ class BunXSettings(BunSettings):
         """The package binary to execute (required)."""
         return self._record("command", name)
 
-    def exec_args(self, *args: object) -> Self:
+    def exec_args(self, *args: str | float) -> Self:
         """Arguments forwarded to the command."""
         return self._record("execArgs", *args)
 

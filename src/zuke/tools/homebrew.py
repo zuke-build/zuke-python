@@ -9,7 +9,7 @@ zuke-build/zuke, not this file.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Self
+from typing import Literal, Self
 
 from zuke import ExecResult, ServiceContext
 from zuke._facade import Settings, call, configured, exec_result
@@ -301,6 +301,14 @@ class FormulaSettings(Settings):
         """The SPDX license identifier, e.g. `MIT`."""
         return self._record("license", spdx)
 
+    def binary(
+        self, configure: Callable[[FormulaBinarySettings], FormulaBinarySettings]
+    ) -> Self:
+        """Add a prebuilt archive for one OS and CPU family. Call once per platform;
+        at least one is required, and each OS/arch pair at most once.
+        """
+        return self._record("binary", configured(FormulaBinarySettings(), configure))
+
     def install(self, *files: str) -> Self:
         """Files from the archive to place in the formula's `bin` (`bin.install`);
         at least one is required. Plain file names only — no directory part.
@@ -310,6 +318,76 @@ class FormulaSettings(Settings):
     def caveats(self, text: str) -> Self:
         """Text Homebrew prints after installing (`def caveats`)."""
         return self._record("caveats", text)
+
+    def test(
+        self, configure: Callable[[FormulaTestSettings], FormulaTestSettings]
+    ) -> Self:
+        """The formula's `test do` block, which `brew test` runs. Without one,
+        `brew test` (and so `HomebrewTasks.verify`) fails.
+        """
+        return self._record("test", configured(FormulaTestSettings(), configure))
+
+
+class FormulaBinarySettings(Settings):
+    """Settings for one prebuilt binary of a formula, rendered as
+    `on_<os> do on_<arch> do url "…" sha256 "…" end end`.
+
+    ```ts
+    s.binary((b) =>
+      b.os("macos").arch("arm").url("https://…/app-aarch64-apple-darwin.tar.gz")
+        .sha256("…")
+    )
+    ```
+    """
+
+    def os(self, value: Literal["macos", "linux"]) -> Self:
+        """The operating system the archive runs on (required)."""
+        return self._record("os", value)
+
+    def arch(self, value: Literal["arm", "intel"]) -> Self:
+        """The CPU family the archive runs on (required)."""
+        return self._record("arch", value)
+
+    def url(self, value: str) -> Self:
+        """Where Homebrew downloads the archive (required; must be `https`)."""
+        return self._record("url", value)
+
+    def sha256(self, value: str) -> Self:
+        """The archive's SHA-256 (required; 64 lowercase hex digits)."""
+        return self._record("sha256", value)
+
+
+class FormulaTestSettings(Settings):
+    """Settings for the formula's `test do` block.
+
+    ```ts
+    s.test((t) => t.command("--version").expectVersion())
+    // test do
+    //   assert_match version.to_s, shell_output("#{bin}/app --version")
+    // end
+    ```
+
+    Without an expectation the command only has to succeed, and is run with
+    `system` and an argv — no shell at all.
+    """
+
+    def binary(self, name: str) -> Self:
+        """Which installed binary to run. Defaults to the first one the formula
+        installs; it must be one of them.
+        """
+        return self._record("binary", name)
+
+    def command(self, *args: str) -> Self:
+        """The arguments to run the binary with, e.g. `"--version"`."""
+        return self._record("command", *args)
+
+    def expect_version(self) -> Self:
+        """Require the output to contain the formula's version."""
+        return self._record("expectVersion")
+
+    def expect_output(self, text: str) -> Self:
+        """Require the output to contain `text`."""
+        return self._record("expectOutput", text)
 
 
 class HomebrewPublishSettings(Settings):

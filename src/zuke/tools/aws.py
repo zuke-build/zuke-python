@@ -1084,6 +1084,37 @@ class AwsCloudwatchDescribeAlarmsSettings(AwsSettings):
 class AwsCloudwatchGetMetricDataSettings(AwsSettings):
     """Settings for `aws cloudwatch get-metric-data`."""
 
+    def metric_stat(
+        self,
+        id: str,
+        configure: Callable[
+            [AwsCloudwatchMetricStatSettings], AwsCloudwatchMetricStatSettings
+        ],
+    ) -> Self:
+        """Add a metric to the request, under `id`, configured by `configure`."""
+        return self._record(
+            "metricStat", id, configured(AwsCloudwatchMetricStatSettings(), configure)
+        )
+
+    def expression(
+        self,
+        id: str,
+        expression: str,
+        configure: Callable[
+            [AwsCloudwatchExpressionSettings], AwsCloudwatchExpressionSettings
+        ]
+        | None = None,
+    ) -> Self:
+        """Add a metric-math expression over the request's other ids, e.g.
+        `("ratio", "100 * errors / requests")`.
+        """
+        return self._record(
+            "expression",
+            id,
+            expression,
+            configured(AwsCloudwatchExpressionSettings(), configure),
+        )
+
     def start_time(self, time: str) -> Self:
         """The start of the range (`--start-time`)."""
         return self._record("startTime", time)
@@ -1144,7 +1175,9 @@ class AwsCloudwatchGetMetricStatisticsSettings(AwsSettings):
         """The aggregation period in seconds (`--period`)."""
         return self._record("period", seconds)
 
-    def statistics(self, *values: object) -> Self:
+    def statistics(
+        self, *values: Literal["SampleCount", "Average", "Sum", "Minimum", "Maximum"]
+    ) -> Self:
         """The basic statistics to return (`--statistics`), e.g. `"Sum"`."""
         return self._record("statistics", *values)
 
@@ -1155,6 +1188,65 @@ class AwsCloudwatchGetMetricStatisticsSettings(AwsSettings):
     def unit(self, value: str) -> Self:
         """Only datapoints published in this unit (`--unit`)."""
         return self._record("unit", value)
+
+
+class AwsCloudwatchExpressionSettings(Settings):
+    """Settings for one metric-math expression in a `get-metric-data` request."""
+
+    def label(self, text: str) -> Self:
+        """A label for the series in the response."""
+        return self._record("label", text)
+
+    def period(self, seconds: float) -> Self:
+        """The period in seconds, for an expression that has no metric to take it from."""
+        return self._record("period", seconds)
+
+    def return_data(self, value: bool) -> Self:
+        """Whether the response carries this series (default `true`)."""
+        return self._record("returnData", value)
+
+
+class AwsCloudwatchMetricStatSettings(Settings):
+    """Settings for one metric in a `get-metric-data` request (a `MetricStat` query)."""
+
+    def namespace(self, value: str) -> Self:
+        """The metric's namespace, e.g. `"AWS/ApplicationELB"`."""
+        return self._record("namespace", value)
+
+    def metric_name(self, value: str) -> Self:
+        """The metric's name, e.g. `"HTTPCode_Target_5XX_Count"`."""
+        return self._record("metricName", value)
+
+    def dimension(self, name: str, value: str) -> Self:
+        """A dimension that picks the series, e.g. `("LoadBalancer", "app/web/1f2e")`; repeatable."""
+        return self._record("dimension", name, value)
+
+    def period(self, seconds: float) -> Self:
+        """The aggregation period in seconds (default 60). CloudWatch accepts 1, 5,
+        10, 20, 30, or a multiple of 60.
+        """
+        return self._record("period", seconds)
+
+    def stat(
+        self,
+        value: Literal["SampleCount", "Average", "Sum", "Minimum", "Maximum", "IQM"],
+    ) -> Self:
+        """The statistic: `"Sum"`, `"Average"`, `"Maximum"`, `"p99"`, …"""
+        return self._record("stat", value)
+
+    def unit(self, value: str) -> Self:
+        """Only datapoints published in this unit, e.g. `"Count"`."""
+        return self._record("unit", value)
+
+    def label(self, text: str) -> Self:
+        """A label for the series in the response."""
+        return self._record("label", text)
+
+    def return_data(self, value: bool) -> Self:
+        """Whether the response carries this series (default `true`). Pass `false`
+        for a metric that only feeds an expression.
+        """
+        return self._record("returnData", value)
 
 
 class AwsCloudwatchMetricValueSettings(AwsCloudwatchGetMetricDataSettings):
@@ -1335,6 +1427,13 @@ class AwsLogsInsightsQuerySettings(Settings):
     def poll_interval(self, duration: str | float) -> Self:
         """The pause between polls for the results (`"2s"`, or ms; default 1 second)."""
         return self._record("pollInterval", duration)
+
+    def aws(self, configure: Callable[[AwsSettings], AwsSettings]) -> Self:
+        """Global options for every command the query runs —
+        `(a) => a.profile("prod").region("eu-west-1")`, a `.toolPath(...)`, or a
+        `.runner(...)`.
+        """
+        return self._record("aws", configured(AwsSettings(), configure))
 
 
 class AwsTasks:

@@ -11,6 +11,7 @@ engine with the worker's environment, which is the ``uv`` one.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import tempfile
 from pathlib import Path
@@ -29,6 +30,8 @@ from zuke import (
 )
 from zuke._generate import generate
 from zuke._guard import is_list, record, string
+from zuke.tools.ai import AiTasks, Reviewer, ReviewSettings
+from zuke.tools.git import GitTasks
 
 UV = ("uv", "run")
 CASES = Path(__file__).parent / "tests" / "protocol" / "cases"
@@ -57,6 +60,52 @@ PINS = {
 }
 """The pinned actions the workflow uses: the Zuke prelude, and what it is made of."""
 RUNNERS = ["ubuntu-latest", "macos-latest", "windows-latest"]
+UV_STEPS = [
+    {"name": "Install uv", "run": "pipx install uv", "shell": "bash"},
+    {"name": "Sync the locked environment", "run": "uv sync --locked", "shell": "bash"},
+]
+"""The steps every job runs before a launcher: the environment the worker needs."""
+ENDPOINTS = [
+    "deno.land:443",
+    "dl.deno.land:443",
+    "jsr.io:443",
+    "github.com:443",
+    "api.github.com:443",
+    "codeload.github.com:443",
+    "objects.githubusercontent.com:443",
+    "release-assets.githubusercontent.com:443",
+    "pypi.org:443",
+    "files.pythonhosted.org:443",
+    "api.openai.com:443",
+]
+"""What a job holding the review's key may reach: the bootstrap, uv, GitHub, OpenAI."""
+REVIEW_BASE = os.environ.get("ZUKE_REVIEW_BASE", "origin/main")
+"""What the reviewers diff against; a commanded run reviews the pull request instead."""
+REVIEW_CRITERIA = (
+    "This is a strict, dependency-free Python SDK on 3.12, checked by pyright in "
+    "strict mode: no `Any`, no `cast`, no `# type: ignore` in `src/`, every "
+    "function annotated, and protocol input narrowed through the guards in "
+    "`_guard.py` rather than trusted. The public API is task-shaped: the "
+    "facades under `zuke.tools` and the context, never loose helpers. Flag "
+    "duplicated logic: a helper retyped instead of imported, or a near-copy "
+    "differing only by a constant or a message. The modules under "
+    "`src/zuke/tools/` are generated from the engine's tool spec and never "
+    "edited by hand, so a finding there belongs in the generator or the engine."
+)
+"""The project-specific notes the code-quality reviewer judges by, on its rubric."""
+REVIEW_SECRETS = {
+    "OPENAI_API_KEY": "${{ secrets.OPENAI_API_KEY }}",
+    "GITHUB_TOKEN": "${{ secrets.GITHUB_TOKEN }}",
+}
+"""What a review step holds: the provider's key and the token the comments post with."""
+COMMAND_ENV = {
+    "GITHUB_TOKEN": "${{ secrets.GITHUB_TOKEN }}",
+    "ZUKE_REVIEW_PR": "${{ github.event.issue.number }}",
+    "ZUKE_REVIEW_COMMENT": "${{ github.event.comment.id }}",
+    "ZUKE_REVIEW_ACTOR": "${{ github.event.comment.user.login }}",
+    "ZUKE_REVIEW_ROLE": "write",
+}
+"""What a commanded run tells the reviewers: the pull request and the comment."""
 
 
 def required(p: StringParameter) -> str:
@@ -77,8 +126,8 @@ async def vendor(ctx: Context) -> None:
     for name in listing.stdout.split():
         if name.endswith(".json"):
             shown = await ctx.sh("git", "-C", repo, "show", f"{tree}/{name}")
-            (CASES / name).write_text(shown.stdout)
-    (CASES / "VERSION").write_text(f"{tag}\n")
+            (CASES / name).write_text(shown.stdout, encoding="utf-8")
+    (CASES / "VERSION").write_text(f"{tag}\n", encoding="utf-8")
     await ctx.log(f"vendored the conformance cases at {tag}")
 
 
@@ -98,18 +147,24 @@ async def vendor_spec(ctx: Context) -> None:
         deno = json.loads(await shown(ctx, repo, tag, f"packages/{name}/deno.json"))
         versions[name] = string(deno, "version", name)
     SPEC.mkdir(exist_ok=True)
-    (SPEC / "tools.json").write_text(spec)
+    (SPEC / "tools.json").write_text(spec, encoding="utf-8")
     engine = {"tag": tag, "versions": versions}
-    (SPEC / "engine.json").write_text(json.dumps(engine, indent=2) + "\n")
+    (SPEC / "engine.json").write_text(
+        json.dumps(engine, indent=2) + "\n", encoding="utf-8"
+    )
     await ctx.log(f"vendored the tool spec at {tag}")
 
 
 def generated() -> dict[str, str]:
     """The facades the vendored spec generates, by file name."""
-    engine = record(json.loads((SPEC / "engine.json").read_text()), "engine.json")
+    engine = record(
+        json.loads((SPEC / "engine.json").read_text(encoding="utf-8")), "engine.json"
+    )
     versions = record(engine.get("versions"), "engine.json versions")
     pinned = {name: string(versions, name, "versions") for name in versions}
-    return generate(json.loads((SPEC / "tools.json").read_text()), pinned)
+    return generate(
+        json.loads((SPEC / "tools.json").read_text(encoding="utf-8")), pinned
+    )
 
 
 async def write_facades(ctx: Context, into: Path) -> None:
@@ -118,7 +173,7 @@ async def write_facades(ctx: Context, into: Path) -> None:
     for stale in into.glob("*.py"):
         stale.unlink()
     for name, text in generated().items():
-        (into / name).write_text(text)
+        (into / name).write_text(text, encoding="utf-8")
     config = Path(__file__).parent / "pyproject.toml"
     await ctx.sh(*UV, "ruff", "format", "--quiet", "--config", str(config), str(into))
 
@@ -142,7 +197,8 @@ async def facades_check(ctx: Context) -> None:
             for name in names
             if not (fresh / name).exists()
             or not (TOOLS / name).exists()
-            or (fresh / name).read_text() != (TOOLS / name).read_text()
+            or (fresh / name).read_text(encoding="utf-8")
+            != (TOOLS / name).read_text(encoding="utf-8")
         )
     finally:
         shutil.rmtree(fresh)
@@ -153,6 +209,57 @@ async def facades_check(ctx: Context) -> None:
     await ctx.log("zuke.tools matches the vendored spec")
 
 
+def reviewer(s: Reviewer) -> Reviewer:
+    """What both reviewers share: the provider, the diff, the depth, the discussion.
+
+    The key is the ``openai_key`` parameter when it is set; without it the
+    review is skipped and says so, as on a local run. Comments are appended,
+    so earlier assessments and their finding ids stay on the thread, and a
+    maintainer contests a finding by replying with its id quoted.
+    """
+    key = Zuke.openai_key.value
+    s = s.provider("openai").skip_if_key_missing()
+    if key is not None:
+        s = s.api_key(key)
+    return (
+        s.comment("append")
+        .diff(lambda d: d.base(REVIEW_BASE))
+        .max_diff_tokens(20000)
+        .conventions_file("AGENTS.md")
+        .verify()
+        .discussion(lambda d: d.threads().commands("@zuke-build"))
+        .fail_when(lambda g: g.score_above(5))
+        .on_error("warn")
+    )
+
+
+def reviewers(r: ReviewSettings) -> ReviewSettings:
+    """The two reviewers this repository's pull requests get: security, then quality."""
+    return r.security(lambda s: reviewer(s).file_context()).generic(
+        lambda s: reviewer(s).criteria(REVIEW_CRITERIA)
+    )
+
+
+async def fetch_review_base(ctx: Context) -> None:
+    """Fetch the branch the reviewers diff against, which a shallow checkout lacks."""
+    result = await GitTasks.fetch(
+        ctx,
+        lambda s: (
+            s.remote("origin")
+            .refspec("+main:refs/remotes/origin/main")
+            .no_tags()
+            .depth(1)
+            .no_throw()
+            .quiet()
+        ),
+    )
+    await ctx.log(
+        "fetched origin/main for the review diff"
+        if result.code == 0
+        else f"could not fetch origin/main, exit {result.code}; reviewing as is"
+    )
+
+
 class Zuke(Build):
     """The gate this repository runs, hosted on the engine it is an SDK for."""
 
@@ -161,6 +268,11 @@ class Zuke(Build):
     )
     engine_tag = parameter("the engine tag to vendor at, such as engine-v1.1.1").flag(
         "engine-tag"
+    )
+    openai_key = (
+        parameter("the OpenAI API key the AI review runs with")
+        .env("OPENAI_API_KEY")
+        .secret()
     )
 
     fmt = (
@@ -203,6 +315,22 @@ class Zuke(Build):
         .description("The gate: formatting, lint, types, tests, the facades")
         .depends_on(fmt_check, lint, check, test, facades_check)
     )
+    review_base = (
+        target()
+        .description("Fetch the base branch the AI review diffs against")
+        .executes(fetch_review_base)
+    )
+    review = (
+        target()
+        .description("AI review of the diff: security and code quality")
+        .depends_on(review_base)
+        .executes(lambda ctx: AiTasks.review(ctx, reviewers))
+    )
+    review_preflight = (
+        target()
+        .description("Check the commenter may start a review")
+        .executes(lambda ctx: AiTasks.preflight(ctx, reviewers))
+    )
     vendor_cases = (
         target()
         .description("Vendor the engine's conformance cases at a tag")
@@ -216,6 +344,78 @@ class Zuke(Build):
         )
         .requires(engine_repo, engine_tag)
         .executes(vendor_spec)
+    )
+
+    ai_review = (
+        cicd()
+        .path(".github/workflows/ai-review.yml")
+        .pipeline(
+            {
+                "name": "AI Review",
+                "triggers": {"pullRequest": [], "issueComment": ["created"]},
+                # One group per pull request, whichever event started the
+                # run, so a push supersedes the review of the one before it.
+                "concurrency": {
+                    "group": "ai-review-${{ github.event.pull_request.number "
+                    "|| github.event.issue.number }}",
+                    "cancelInProgress": True,
+                },
+                "harden": {"egress": "block", "allowedEndpoints": ENDPOINTS},
+            }
+        )
+        .invokes(
+            {
+                "target": review,
+                "id": "review",
+                "name": "AI review",
+                "permissions": {"contents": "read", "pull-requests": "write"},
+                "if": (
+                    "${{ github.event_name == 'pull_request' && "
+                    "github.event.pull_request.head.repo.full_name == "
+                    "github.repository }}"
+                ),
+                "timeoutMinutes": 15,
+                "steps": [
+                    *UV_STEPS,
+                    {
+                        "name": "AI review with Zuke",
+                        "run": "./zuke review",
+                        "env": REVIEW_SECRETS,
+                    },
+                ],
+            },
+            {
+                "target": review,
+                "id": "commandReview",
+                "name": "AI review on command",
+                "permissions": {"contents": "read", "pull-requests": "write"},
+                "if": (
+                    "${{ github.event_name == 'issue_comment' && "
+                    "github.event.issue.pull_request && "
+                    "github.event.comment.user.type != 'Bot' && "
+                    "(startsWith(github.event.comment.body, '@zuke-build review') || "
+                    "startsWith(github.event.comment.body, '@zuke-build accept')) }}"
+                ),
+                "timeoutMinutes": 15,
+                "steps": [
+                    *UV_STEPS,
+                    {
+                        "name": "Check the commenter may start a review",
+                        "id": "callers",
+                        "run": "./zuke review_preflight",
+                        "env": COMMAND_ENV,
+                        "continueOnError": True,
+                    },
+                    {
+                        "name": "AI review with Zuke",
+                        "if": "steps.callers.outcome == 'success'",
+                        "run": "./zuke review",
+                        "env": {**REVIEW_SECRETS, **COMMAND_ENV},
+                    },
+                ],
+            },
+        )
+        .pins(PINS)
     )
 
     ci_workflow = (
@@ -243,12 +443,7 @@ class Zuke(Build):
                 # than the derived command, as the engine repository's matrix
                 # job does.
                 steps=[
-                    {"name": "Install uv", "run": "pipx install uv", "shell": "bash"},
-                    {
-                        "name": "Sync the locked environment",
-                        "run": "uv sync --locked",
-                        "shell": "bash",
-                    },
+                    *UV_STEPS,
                     {
                         "name": "Run the gate with the bash launcher",
                         "if": "runner.os != 'Windows'",

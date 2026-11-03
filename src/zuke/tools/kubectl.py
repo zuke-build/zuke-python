@@ -708,7 +708,7 @@ class KubectlExecSettings(KubectlSettings):
         """Allocate a TTY (`-t`)."""
         return self._record("tty")
 
-    def command(self, *args: object) -> Self:
+    def command(self, *args: str | float) -> Self:
         """The command and arguments to run in the container (required)."""
         return self._record("command", *args)
 

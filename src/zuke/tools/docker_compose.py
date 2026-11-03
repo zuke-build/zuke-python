@@ -484,7 +484,7 @@ class DockerComposeExecSettings(DockerComposeSettings):
         """Set an environment variable (`-e KEY=value`); repeatable."""
         return self._record("envVar", key, value)
 
-    def command_args(self, *args: object) -> Self:
+    def command_args(self, *args: str | float) -> Self:
         """The command and arguments to execute."""
         return self._record("commandArgs", *args)
 
@@ -581,7 +581,7 @@ class DockerComposeRunSettings(DockerComposeSettings):
         """Set an environment variable (`-e KEY=value`); repeatable."""
         return self._record("envVar", key, value)
 
-    def command_args(self, *args: object) -> Self:
+    def command_args(self, *args: str | float) -> Self:
         """The command and arguments to run inside the container."""
         return self._record("commandArgs", *args)
 

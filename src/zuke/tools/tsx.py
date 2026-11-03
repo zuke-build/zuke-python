@@ -26,7 +26,7 @@ class TsxCommonSettings(ToolSettings):
         """The entry point to execute (required)."""
         return self._record("script", path)
 
-    def script_args(self, *args: object) -> Self:
+    def script_args(self, *args: str | float) -> Self:
         """Arguments passed to the script (after the entry point)."""
         return self._record("scriptArgs", *args)
 
