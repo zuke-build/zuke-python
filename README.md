@@ -211,7 +211,11 @@ The documentation lives in the main repository:
   language hosts a build.
 
 The Python surface itself is documented by its docstrings, and pyright and your
-editor read them.
+editor read them. The website renders them as the
+[Python API reference](https://zuke.build/api/python), with a
+[Python guide](https://zuke.build/docs/python) beside it: `zuke api_reference`
+generates the reference from the docstrings, and each release syncs it to the
+website.
 
 ## Development
 

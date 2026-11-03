@@ -35,6 +35,8 @@ def test_the_gate_depends_on_every_check() -> None:
         "review",
         "review_preflight",
         "publish",
+        "api_reference",
+        "sync_website",
         "vendor_cases",
         "vendor_spec",
     ]
@@ -256,14 +258,19 @@ def test_the_release_workflow_publishes_a_cut_release_from_main() -> None:
     assert job["environment"] == "pypi"
     assert is_record(job["permissions"]) and job["permissions"]["id-token"] == "write"
     steps = job["steps"]
-    assert is_list(steps) and len(steps) == 4
+    assert is_list(steps) and len(steps) == 5
     first, *rest = steps
     assert is_record(first) and is_record(first["uses"])
     assert str(first["uses"]["version"]).startswith("v")
     assert [step["if"] for step in rest if is_record(step)] == [
         "steps.release.outputs.release_created"
-    ] * 3
-    assert is_record(rest[-1]) and rest[-1]["run"] == "./zuke publish"
+    ] * 4
+    assert is_record(rest[-2]) and rest[-2]["run"] == "./zuke publish"
+    # The website sync runs after the upload, so a failed sync never holds it.
+    assert is_record(rest[-1]) and rest[-1]["run"] == "./zuke sync_website"
+    assert rest[-1]["env"] == {
+        "WEBSITE_SYNC_TOKEN": "${{ secrets.WEBSITE_SYNC_TOKEN }}"
+    }
 
 
 async def test_publish_builds_signs_the_distributions_then_uploads(
@@ -450,3 +457,138 @@ async def test_lock_check_names_what_is_wrong_with_the_lock(
 def test_the_committed_lock_pins_every_release() -> None:
     lockfile = json.loads(build.LOCK.read_text())
     assert set(build.locked()) <= set(lockfile["specifiers"])
+
+
+async def run_target(
+    name: str, handlers: dict[str, Handler], parameters: dict[str, object] | None = None
+) -> None:
+    """Run one target of the build against a fake engine serving ``handlers``."""
+    peer: Peer
+    async with served(Zuke()) as peer:
+        for method, handler in handlers.items():
+            peer.on(method, handler)
+        await peer.request("build.configure", {"parameters": parameters or {}})
+        params = {"target": name, "runId": "r1", "dryRun": False}
+        assert await asyncio.wait_for(peer.request("target.run", params), 10) is None
+
+
+async def test_api_reference_writes_the_reference(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    written = tmp_path / ".zuke" / "api.json"
+    monkeypatch.setattr(build, "REFERENCE", written)
+    await run_target("api_reference", {"log": lambda _: asyncio.sleep(0)})
+    reference = json.loads(written.read_text())
+    assert reference["generated"] == f"zuke@{build.__version__}"
+    assert reference["packages"][0]["name"] == "zuke"
+
+
+async def test_sync_website_is_skipped_without_a_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("WEBSITE_SYNC_TOKEN", raising=False)
+    logged: list[object] = []
+    calls: list[object] = []
+
+    async def log(params: object) -> object:
+        logged.append(params)
+        return None
+
+    async def tool_call(params: object) -> object:
+        calls.append(params)
+        return {}
+
+    await run_target("sync_website", {"log": log, "tool.call": tool_call})
+    assert calls == []
+    assert "skipping the website sync" in str(logged)
+
+
+@pytest.mark.parametrize(
+    ("status", "opened"),
+    [("M src/data/api-python.json\n", 0), ("M src/data/api-python.json\n", 1), ("", 0)],
+)
+async def test_sync_website_pushes_opens_and_queues_the_merge(
+    monkeypatch: pytest.MonkeyPatch, status: str, opened: int
+) -> None:
+    monkeypatch.setenv("WEBSITE_SYNC_TOKEN", "tok")
+    calls: list[dict[str, object]] = []
+    secrets: list[object] = []
+    logged: list[object] = []
+    written: list[bool] = []
+
+    async def tool_call(params: object) -> object:
+        assert is_record(params)
+        calls.append(params)
+        task = (params["package"], params["task"])
+        if task == ("git", "add"):
+            setters = configure_calls(params)
+            assert is_list(setters[0]) and is_list(setters[0][1])
+            into = Path(str(setters[0][1][0]))
+            written.append((into / build.WEBSITE_API).is_file())
+        if task == ("git", "status"):
+            return {"code": 0, "stdout": status, "stderr": ""}
+        if task == ("gh", "run"):
+            return {"code": opened, "stdout": "https://github.com/pr/1\n", "stderr": ""}
+        return {"code": 0, "stdout": "", "stderr": ""}
+
+    async def secret(params: object) -> object:
+        secrets.append(params)
+        return None
+
+    async def log(params: object) -> object:
+        logged.append(params)
+        return None
+
+    await run_target(
+        "sync_website", {"tool.call": tool_call, "secret.register": secret, "log": log}
+    )
+    tasks = [(c["package"], c["task"]) for c in calls]
+    clone, checkout = calls[0], calls[1]
+    version = build.__version__
+    branch = f"zuke-python-sync/{version}"
+    assert configure_calls(clone)[0] == [
+        "repository",
+        ["https://github.com/zuke-build/zuke-build.github.io.git"],
+    ]
+    assert configure_calls(checkout)[1:] == [["ref", [branch]], ["create", []]]
+    assert written == [True]
+    # The token and the header it rides in are redacted before any push.
+    assert [s["value"] for s in secrets if is_record(s)] == [
+        "tok",
+        "AUTHORIZATION: basic eC1hY2Nlc3MtdG9rZW46dG9r",
+    ]
+    if not status:
+        assert tasks == [("git", t) for t in ("clone", "checkout", "add", "status")]
+        assert "already has this reference" in str(logged)
+        return
+    assert tasks == [
+        *[("git", t) for t in ("clone", "checkout", "add", "status", "commit", "run")],
+        ("gh", "run"),
+        ("gh", "run"),
+    ]
+    push, create, merge = calls[5], calls[6], calls[7]
+    assert configure_calls(push)[1:] == [
+        [
+            "config",
+            ["http.extraheader", "AUTHORIZATION: basic eC1hY2Nlc3MtdG9rZW46dG9r"],
+        ],
+        ["command", ["push", "--force", "origin", branch]],
+    ]
+    message = f"chore: sync the python api reference for zuke@{version}"
+    assert configure_calls(create)[:5] == [
+        ["command", ["pr", "create"]],
+        ["repo", ["zuke-build/zuke-build.github.io"]],
+        ["flag", ["head", branch]],
+        ["flag", ["title", message]],
+        ["flag", ["body", build.SYNC_BODY]],
+    ]
+    assert ["env", [{"GH_TOKEN": "tok"}]] in configure_calls(create)
+    assert configure_calls(merge)[:4] == [
+        ["command", ["pr", "merge", branch]],
+        ["repo", ["zuke-build/zuke-build.github.io"]],
+        ["flag", ["auto"]],
+        ["flag", ["squash"]],
+    ]
+    assert ["noThrow", []] not in configure_calls(merge)
+    expected = "https://github.com/pr/1" if opened == 0 else "was already open"
+    assert expected in str(logged)

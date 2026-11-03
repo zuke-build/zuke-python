@@ -41,3 +41,8 @@ jobs:
       - name: Publish to PyPI with Zuke
         if: steps.release.outputs.release_created
         run: ./zuke publish
+      - name: Sync the API reference to the website with Zuke
+        if: steps.release.outputs.release_created
+        run: ./zuke sync_website
+        env:
+          WEBSITE_SYNC_TOKEN: "${{ secrets.WEBSITE_SYNC_TOKEN }}"
