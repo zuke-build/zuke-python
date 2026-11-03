@@ -407,6 +407,63 @@ async def test_the_review_leaves_the_key_out_when_the_parameter_is_unset() -> No
     assert "apiKey" not in [call[0] for call in setters if is_list(call)]
 
 
+async def test_the_review_posts_as_the_app_when_its_credentials_are_set() -> None:
+    calls: list[object] = []
+
+    async def tool_call(params: object) -> object:
+        calls.append(params)
+        assert is_record(params)
+        if params["package"] == "gh":
+            return {"token": "ghs_app", "expiresAt": "", "installationId": 1}
+        return None
+
+    peer: Peer
+    async with served(Zuke()) as peer:
+        peer.on("tool.call", tool_call)
+        configured = {"app_id": "42", "app_key": "PEM"}
+        await peer.request("build.configure", {"parameters": configured})
+        params = {"target": "review", "runId": "r1", "dryRun": False}
+        assert await asyncio.wait_for(peer.request("target.run", params), 10) is None
+    mint, review = calls
+    assert is_record(mint) and (mint["package"], mint["task"]) == ("gh", "appToken")
+    assert configure_calls(mint) == [
+        ["appId", ["42"]],
+        ["privateKey", ["PEM"]],
+        ["owner", ["zuke-build"]],
+        ["repositories", ["zuke-python"]],
+        ["permission", ["pull_requests", "write"]],
+        ["permission", ["issues", "write"]],
+        ["permission", ["contents", "write"]],
+    ]
+    for reviewer in configure_calls(review):
+        assert is_list(reviewer) and is_list(reviewer[1]) and is_record(reviewer[1][0])
+        setters = reviewer[1][0]["configure"]
+        assert is_list(setters) and ["commentToken", ["ghs_app"]] in setters
+
+
+async def test_the_review_posts_with_the_actions_token_without_the_app() -> None:
+    calls: list[object] = []
+
+    async def tool_call(params: object) -> object:
+        calls.append(params)
+        return None
+
+    peer: Peer
+    async with served(Zuke()) as peer:
+        peer.on("tool.call", tool_call)
+        # The id alone is not enough: the key is the credential.
+        await peer.request("build.configure", {"parameters": {"app_id": "42"}})
+        params = {"target": "review", "runId": "r1", "dryRun": False}
+        assert await asyncio.wait_for(peer.request("target.run", params), 10) is None
+    [review] = calls
+    assert is_record(review) and review["package"] == "ai"
+    for reviewer in configure_calls(review):
+        assert is_list(reviewer) and is_list(reviewer[1]) and is_record(reviewer[1][0])
+        setters = reviewer[1][0]["configure"]
+        assert is_list(setters)
+        assert "commentToken" not in [call[0] for call in setters if is_list(call)]
+
+
 async def test_lock_check_names_what_is_wrong_with_the_lock(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

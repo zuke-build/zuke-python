@@ -9,14 +9,1613 @@ zuke-build/zuke, not this file.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Self
+from typing import Literal, Self
 
 from zuke import ExecResult, ServiceContext
-from zuke._facade import call, configured, exec_result
+from zuke._facade import Settings, call, configured, exec_result
 from zuke.tools._tooling import SubcommandSettings, ToolSettings
 
 PACKAGE = "gh"
 VERSION = "1.15.0"
+
+
+class GhSettings(SubcommandSettings):
+    """Settings for a `gh` invocation."""
+
+    def repo(self, slug: str) -> Self:
+        """Target repository as `OWNER/REPO` (`-R`/`--repo`)."""
+        return self._record("repo", slug)
+
+
+class GhCommandSettings(GhSettings):
+    """Base for a typed `gh` subcommand: it contributes the command path (the
+    group, the verb, and any operand) and its own flags, and inherits
+    everything else from "./settings.ts".GhSettings.
+    """
+
+
+class GhBodySettings(GhCommandSettings):
+    """Base for the commands that take message text: `pr create`, `pr comment`,
+    `pr edit`, `issue create`, `issue comment`.
+
+    gh spells it `--body` for the text and `--body-file` for a file, with `-`
+    meaning standard input — the same pair on every one of them.
+    """
+
+    def body(self, text: str) -> Self:
+        """The message text (`--body`)."""
+        return self._record("body", text)
+
+    def body_file(self, path: str) -> Self:
+        """Read the message from a file (`--body-file`); `-` reads standard input."""
+        return self._record("bodyFile", path)
+
+
+class GhReadSettings(GhCommandSettings):
+    """Base for the commands that can print JSON: `pr list`, `pr view`,
+    `pr checks`, `issue list`, `issue view`, `release list`, `release view`.
+
+    gh requires an explicit field list for `--json`, which is why the
+    value-returning tasks pin one rather than leaving it to the caller.
+
+    A `…ListEntries` reader parses the array `--json` prints, so `.jq(...)` and
+    `.template(...)` — which replace that array with whatever they render —
+    belong on the plain `…List` task instead.
+    """
+
+    def json(self, *fields: str) -> Self:
+        """Emit JSON with these fields (`--json`), which gh requires by name — there
+        is no "all fields" form.
+        """
+        return self._record("json", *fields)
+
+    def jq(self, expression: str) -> Self:
+        """Filter the JSON with a jq expression (`--jq`)."""
+        return self._record("jq", expression)
+
+    def template(self, text: str) -> Self:
+        """Format the JSON through a Go template (`--template`)."""
+        return self._record("template", text)
+
+
+class GhWebReadSettings(GhReadSettings):
+    """Base for the read commands that also take `--web`: every one of them except
+    `release list`, which gh gives no browser view. Keeping `.web()` here rather
+    than on GhReadSettings is what stops a build offering a flag gh
+    would reject.
+    """
+
+    def web(self) -> Self:
+        """Open the result in a browser instead of printing it (`--web`). A build
+        has no browser, so this is for a developer running the target by hand.
+        """
+        return self._record("web")
+
+
+class GhPrReadSettings(GhWebReadSettings):
+    """Base for the `pr` commands that read one pull request and can print JSON —
+    `view` and `checks` — so the operand has one implementation across them.
+    """
+
+    def selector(self, value: str | float) -> Self:
+        """The pull request — number, URL, or branch; defaults to the current branch's."""
+        return self._record("selector", value)
+
+
+class GhPrChecksSettings(GhPrReadSettings):
+    """Settings for `gh pr checks`."""
+
+    def watch(self) -> Self:
+        """Keep watching until the checks finish (`--watch`). A target that watches
+        blocks until CI is done, so pair it with `.killAfter(...)` unless the wait
+        is the point.
+        """
+        return self._record("watch")
+
+    def fail_fast(self) -> Self:
+        """Stop watching at the first failure (`--fail-fast`)."""
+        return self._record("failFast")
+
+    def required(self) -> Self:
+        """Only the checks marked required (`--required`)."""
+        return self._record("required")
+
+    def interval(self, seconds: float) -> Self:
+        """How often to refresh while watching (`--interval`), in seconds."""
+        return self._record("interval", seconds)
+
+
+class GhPrCloseSettings(GhCommandSettings):
+    """Settings for `gh pr close`."""
+
+    def selector(self, value: str | float) -> Self:
+        """The pull request — number, URL, or branch; defaults to the current branch's."""
+        return self._record("selector", value)
+
+    def comment(self, text: str) -> Self:
+        """Leave a closing comment (`--comment`)."""
+        return self._record("comment", text)
+
+    def delete_branch(self) -> Self:
+        """Delete the branch afterwards (`--delete-branch`)."""
+        return self._record("deleteBranch")
+
+
+class GhPrTargetSettings(GhBodySettings):
+    """Base for the `pr` commands that take a pull request and post text —
+    `merge`, `comment`, and `edit` — so the operand and the `--body` pair have
+    one implementation across them.
+    """
+
+    def selector(self, value: str | float) -> Self:
+        """The pull request — its number, URL, or branch name. Omit it to act on the
+        PR for the current branch, as gh does.
+        """
+        return self._record("selector", value)
+
+
+class GhPrCommentSettings(GhPrTargetSettings):
+    """Settings for `gh pr comment`."""
+
+    def edit_last(self) -> Self:
+        """Edit your most recent comment instead of adding one (`--edit-last`)."""
+        return self._record("editLast")
+
+    def create_if_none(self) -> Self:
+        """With editLast, post a new comment when there is none (`--create-if-none`)."""
+        return self._record("createIfNone")
+
+    def delete_last(self) -> Self:
+        """Delete your most recent comment (`--delete-last`)."""
+        return self._record("deleteLast")
+
+    def yes(self) -> Self:
+        """Skip the confirmation a delete otherwise prompts for (`--yes`)."""
+        return self._record("yes")
+
+
+class GhPrCreateSettings(GhBodySettings):
+    """Settings for `gh pr create`."""
+
+    def title(self, text: str) -> Self:
+        """The pull request's title (`--title`)."""
+        return self._record("title", text)
+
+    def base(self, branch: str) -> Self:
+        """The branch to merge into (`--base`)."""
+        return self._record("base", branch)
+
+    def head(self, branch: str) -> Self:
+        """The branch holding the commits (`--head`)."""
+        return self._record("head", branch)
+
+    def assignee(self, *logins: str) -> Self:
+        """Assign someone by login (`--assignee`), `@me` for yourself; repeatable."""
+        return self._record("assignee", *logins)
+
+    def label(self, *names: str) -> Self:
+        """Add a label by name (`--label`); repeatable."""
+        return self._record("label", *names)
+
+    def reviewer(self, *handles: str) -> Self:
+        """Request a review from a person or team (`--reviewer`); repeatable."""
+        return self._record("reviewer", *handles)
+
+    def milestone(self, name: str) -> Self:
+        """Add to a milestone by name (`--milestone`)."""
+        return self._record("milestone", name)
+
+    def project(self, *titles: str) -> Self:
+        """Add to a project by title (`--project`); repeatable."""
+        return self._record("project", *titles)
+
+    def draft(self) -> Self:
+        """Open it as a draft (`--draft`)."""
+        return self._record("draft")
+
+    def fill(self) -> Self:
+        """Take the title and body from the commits (`--fill`)."""
+        return self._record("fill")
+
+    def fill_first(self) -> Self:
+        """Take them from the first commit only (`--fill-first`)."""
+        return self._record("fillFirst")
+
+    def fill_verbose(self) -> Self:
+        """Take the body from every commit's message (`--fill-verbose`)."""
+        return self._record("fillVerbose")
+
+    def dry_run(self) -> Self:
+        """Print what would be created without creating it (`--dry-run`)."""
+        return self._record("dryRun")
+
+    def no_maintainer_edit(self) -> Self:
+        """Refuse maintainer edits to the branch (`--no-maintainer-edit`)."""
+        return self._record("noMaintainerEdit")
+
+    def template_file(self, path: str) -> Self:
+        """A template file to seed the body from (`--template`)."""
+        return self._record("templateFile", path)
+
+
+class GhPrEditSettings(GhPrTargetSettings):
+    """Settings for `gh pr edit`."""
+
+    def title(self, text: str) -> Self:
+        """Set the title (`--title`)."""
+        return self._record("title", text)
+
+    def base(self, branch: str) -> Self:
+        """Change the base branch (`--base`)."""
+        return self._record("base", branch)
+
+    def add_label(self, *names: str) -> Self:
+        """Add a label (`--add-label`); repeatable."""
+        return self._record("addLabel", *names)
+
+    def remove_label(self, *names: str) -> Self:
+        """Remove a label (`--remove-label`); repeatable."""
+        return self._record("removeLabel", *names)
+
+    def add_assignee(self, *logins: str) -> Self:
+        """Add an assignee (`--add-assignee`); repeatable."""
+        return self._record("addAssignee", *logins)
+
+    def remove_assignee(self, *logins: str) -> Self:
+        """Remove an assignee (`--remove-assignee`); repeatable."""
+        return self._record("removeAssignee", *logins)
+
+    def add_reviewer(self, *handles: str) -> Self:
+        """Request a review (`--add-reviewer`); repeatable."""
+        return self._record("addReviewer", *handles)
+
+    def remove_reviewer(self, *handles: str) -> Self:
+        """Drop a review request (`--remove-reviewer`); repeatable."""
+        return self._record("removeReviewer", *handles)
+
+    def add_project(self, *titles: str) -> Self:
+        """Add to a project by title (`--add-project`); repeatable."""
+        return self._record("addProject", *titles)
+
+    def remove_project(self, *titles: str) -> Self:
+        """Take it off a project by title (`--remove-project`); repeatable."""
+        return self._record("removeProject", *titles)
+
+    def milestone(self, name: str) -> Self:
+        """Set the milestone (`--milestone`)."""
+        return self._record("milestone", name)
+
+    def remove_milestone(self) -> Self:
+        """Clear the milestone (`--remove-milestone`)."""
+        return self._record("removeMilestone")
+
+
+class GhPrListSettings(GhWebReadSettings):
+    """Settings for `gh pr list`."""
+
+    def state(self, value: Literal["open", "closed", "merged", "all"]) -> Self:
+        """Filter by state (`--state`): `open`, `closed`, `merged`, or `all`."""
+        return self._record("state", value)
+
+    def base(self, branch: str) -> Self:
+        """Filter by base branch (`--base`)."""
+        return self._record("base", branch)
+
+    def head(self, branch: str) -> Self:
+        """Filter by head branch (`--head`)."""
+        return self._record("head", branch)
+
+    def author(self, login: str) -> Self:
+        """Filter by author (`--author`)."""
+        return self._record("author", login)
+
+    def app(self, name: str) -> Self:
+        """Filter by the GitHub App that opened it (`--app`)."""
+        return self._record("app", name)
+
+    def assignee(self, login: str) -> Self:
+        """Filter by assignee (`--assignee`)."""
+        return self._record("assignee", login)
+
+    def label(self, *names: str) -> Self:
+        """Filter by label (`--label`); repeatable."""
+        return self._record("label", *names)
+
+    def limit(self, count: float) -> Self:
+        """Cap how many are fetched (`--limit`); gh's default is 30."""
+        return self._record("limit", count)
+
+    def search(self, query: str) -> Self:
+        """Filter with a search query (`--search`)."""
+        return self._record("search", query)
+
+    def draft(self) -> Self:
+        """Only draft pull requests (`--draft`)."""
+        return self._record("draft")
+
+
+class GhPrMergeSettings(GhPrTargetSettings):
+    """Settings for `gh pr merge`."""
+
+    def merge(self) -> Self:
+        """Merge with a merge commit (`--merge`)."""
+        return self._record("merge")
+
+    def squash(self) -> Self:
+        """Squash the commits into one (`--squash`)."""
+        return self._record("squash")
+
+    def rebase(self) -> Self:
+        """Rebase the commits onto the base (`--rebase`)."""
+        return self._record("rebase")
+
+    def auto(self) -> Self:
+        """Merge once the requirements are met (`--auto`)."""
+        return self._record("auto")
+
+    def disable_auto(self) -> Self:
+        """Turn auto-merge off again (`--disable-auto`)."""
+        return self._record("disableAuto")
+
+    def admin(self) -> Self:
+        """Merge with administrator privileges (`--admin`)."""
+        return self._record("admin")
+
+    def delete_branch(self) -> Self:
+        """Delete the branch afterwards (`--delete-branch`)."""
+        return self._record("deleteBranch")
+
+    def subject(self, text: str) -> Self:
+        """The merge commit's subject (`--subject`)."""
+        return self._record("subject", text)
+
+    def author_email(self, address: str) -> Self:
+        """The merge commit's author email (`--author-email`)."""
+        return self._record("authorEmail", address)
+
+    def match_head_commit(self, sha: str) -> Self:
+        """Refuse the merge unless the head is still this commit
+        (`--match-head-commit`) — the guard against merging a PR that moved
+        between the check and the merge.
+        """
+        return self._record("matchHeadCommit", sha)
+
+
+class GhPrViewSettings(GhPrReadSettings):
+    """Settings for `gh pr view`."""
+
+    def comments(self) -> Self:
+        """Include the comments (`--comments`)."""
+        return self._record("comments")
+
+
+class GhIssueCloseSettings(GhCommandSettings):
+    """Settings for `gh issue close`."""
+
+    def selector(self, value: str | float) -> Self:
+        """The issue — its number or URL (required)."""
+        return self._record("selector", value)
+
+    def comment(self, text: str) -> Self:
+        """Leave a closing comment (`--comment`)."""
+        return self._record("comment", text)
+
+    def reason(self, value: Literal["completed", "not planned", "duplicate"]) -> Self:
+        """Why it is closed (`--reason`)."""
+        return self._record("reason", value)
+
+    def duplicate_of(self, number_or_url: str | float) -> Self:
+        """Which issue it duplicates (`--duplicate-of`), by number or URL."""
+        return self._record("duplicateOf", number_or_url)
+
+
+class GhIssueCommentSettings(GhBodySettings):
+    """Settings for `gh issue comment`."""
+
+    def selector(self, value: str | float) -> Self:
+        """The issue — its number or URL (required)."""
+        return self._record("selector", value)
+
+    def edit_last(self) -> Self:
+        """Edit your most recent comment instead of adding one (`--edit-last`)."""
+        return self._record("editLast")
+
+    def create_if_none(self) -> Self:
+        """With editLast, post a new comment when there is none (`--create-if-none`)."""
+        return self._record("createIfNone")
+
+    def delete_last(self) -> Self:
+        """Delete your most recent comment (`--delete-last`)."""
+        return self._record("deleteLast")
+
+    def yes(self) -> Self:
+        """Skip the confirmation a delete otherwise prompts for (`--yes`)."""
+        return self._record("yes")
+
+
+class GhIssueCreateSettings(GhBodySettings):
+    """Settings for `gh issue create`."""
+
+    def title(self, text: str) -> Self:
+        """The issue's title (`--title`)."""
+        return self._record("title", text)
+
+    def assignee(self, *logins: str) -> Self:
+        """Assign someone by login (`--assignee`), `@me` for yourself; repeatable."""
+        return self._record("assignee", *logins)
+
+    def label(self, *names: str) -> Self:
+        """Add a label by name (`--label`); repeatable."""
+        return self._record("label", *names)
+
+    def project(self, *titles: str) -> Self:
+        """Add to a project by title (`--project`); repeatable."""
+        return self._record("project", *titles)
+
+    def milestone(self, name: str) -> Self:
+        """Add to a milestone by name (`--milestone`)."""
+        return self._record("milestone", name)
+
+    def type_(self, name: str) -> Self:
+        """Set the issue type by name (`--type`)."""
+        return self._record("type", name)
+
+    def parent(self, number_or_url: str | float) -> Self:
+        """File it as a sub-issue of this number or URL (`--parent`)."""
+        return self._record("parent", number_or_url)
+
+    def template_name(self, name: str) -> Self:
+        """The issue template to start the body from (`--template`)."""
+        return self._record("templateName", name)
+
+
+class GhIssueListSettings(GhWebReadSettings):
+    """Settings for `gh issue list`."""
+
+    def state(self, value: Literal["open", "closed", "all"]) -> Self:
+        """Filter by state (`--state`): `open`, `closed`, or `all`."""
+        return self._record("state", value)
+
+    def author(self, login: str) -> Self:
+        """Filter by author (`--author`)."""
+        return self._record("author", login)
+
+    def app(self, name: str) -> Self:
+        """Filter by the GitHub App that opened it (`--app`)."""
+        return self._record("app", name)
+
+    def assignee(self, login: str) -> Self:
+        """Filter by assignee (`--assignee`)."""
+        return self._record("assignee", login)
+
+    def mention(self, login: str) -> Self:
+        """Filter by who is mentioned (`--mention`)."""
+        return self._record("mention", login)
+
+    def milestone(self, name_or_number: str) -> Self:
+        """Filter by milestone number or title (`--milestone`)."""
+        return self._record("milestone", name_or_number)
+
+    def type_(self, name: str) -> Self:
+        """Filter by issue type (`--type`)."""
+        return self._record("type", name)
+
+    def label(self, *names: str) -> Self:
+        """Filter by label (`--label`); repeatable."""
+        return self._record("label", *names)
+
+    def limit(self, count: float) -> Self:
+        """Cap how many are fetched (`--limit`); gh's default is 30."""
+        return self._record("limit", count)
+
+    def search(self, query: str) -> Self:
+        """Filter with a search query (`--search`)."""
+        return self._record("search", query)
+
+
+class GhIssueViewSettings(GhWebReadSettings):
+    """Settings for `gh issue view`."""
+
+    def selector(self, value: str | float) -> Self:
+        """The issue — its number or URL (required)."""
+        return self._record("selector", value)
+
+    def comments(self) -> Self:
+        """Include the comments (`--comments`)."""
+        return self._record("comments")
+
+
+class GhReleaseCreateSettings(GhCommandSettings):
+    """Settings for `gh release create`."""
+
+    def tag(self, name: str) -> Self:
+        """The tag to release (required); gh creates it when it does not exist."""
+        return self._record("tag", name)
+
+    def files(self, *paths: str) -> Self:
+        """Asset files to attach (positional); repeatable. gh reads a `#label`
+        suffix on a path as the asset's display label.
+        """
+        return self._record("files", *paths)
+
+    def title(self, text: str) -> Self:
+        """The release title (`--title`)."""
+        return self._record("title", text)
+
+    def notes(self, text: str) -> Self:
+        """The release notes (`--notes`)."""
+        return self._record("notes", text)
+
+    def notes_file(self, path: str) -> Self:
+        """Read the notes from a file (`--notes-file`); `-` reads standard input."""
+        return self._record("notesFile", path)
+
+    def generate_notes(self) -> Self:
+        """Have GitHub write the title and notes (`--generate-notes`)."""
+        return self._record("generateNotes")
+
+    def notes_from_tag(self) -> Self:
+        """Take the notes from the tag's annotation (`--notes-from-tag`)."""
+        return self._record("notesFromTag")
+
+    def notes_start_tag(self, name: str) -> Self:
+        """Generate notes starting from this tag (`--notes-start-tag`)."""
+        return self._record("notesStartTag", name)
+
+    def draft(self) -> Self:
+        """Save it as a draft rather than publishing (`--draft`)."""
+        return self._record("draft")
+
+    def prerelease(self) -> Self:
+        """Mark it a prerelease (`--prerelease`)."""
+        return self._record("prerelease")
+
+    def latest(self) -> Self:
+        """Mark it the latest release (`--latest`)."""
+        return self._record("latest")
+
+    def target(self, branch_or_sha: str) -> Self:
+        """The branch or commit to tag (`--target`)."""
+        return self._record("target", branch_or_sha)
+
+    def discussion_category(self, name: str) -> Self:
+        """Open a discussion in this category (`--discussion-category`)."""
+        return self._record("discussionCategory", name)
+
+    def verify_tag(self) -> Self:
+        """Abort unless the tag already exists on the remote (`--verify-tag`)."""
+        return self._record("verifyTag")
+
+    def fail_on_no_commits(self) -> Self:
+        """Fail when there are no commits since the last release (`--fail-on-no-commits`)."""
+        return self._record("failOnNoCommits")
+
+
+class GhReleaseDeleteSettings(GhCommandSettings):
+    """Settings for `gh release delete`."""
+
+    def tag(self, name: str) -> Self:
+        """The release to delete, by tag (required)."""
+        return self._record("tag", name)
+
+    def cleanup_tag(self) -> Self:
+        """Delete the git tag as well (`--cleanup-tag`)."""
+        return self._record("cleanupTag")
+
+    def yes(self) -> Self:
+        """Skip the confirmation prompt (`--yes`)."""
+        return self._record("yes")
+
+
+class GhReleaseDownloadSettings(GhCommandSettings):
+    """Settings for `gh release download`."""
+
+    def tag(self, name: str) -> Self:
+        """The release's tag; gh takes the latest release when it is omitted."""
+        return self._record("tag", name)
+
+    def pattern(self, *globs: str) -> Self:
+        """Only assets matching this glob (`--pattern`); repeatable."""
+        return self._record("pattern", *globs)
+
+    def dir(self, path: str) -> Self:
+        """The directory to download into (`--dir`)."""
+        return self._record("dir", path)
+
+    def output(self, path: str) -> Self:
+        """Write a single asset to this file (`--output`); `-` writes standard output."""
+        return self._record("output", path)
+
+    def archive(self, format: Literal["zip", "tar.gz"]) -> Self:
+        """Download the source archive instead of the assets (`--archive`)."""
+        return self._record("archive", format)
+
+    def clobber(self) -> Self:
+        """Overwrite files that already exist (`--clobber`)."""
+        return self._record("clobber")
+
+    def skip_existing(self) -> Self:
+        """Leave files that already exist alone (`--skip-existing`)."""
+        return self._record("skipExisting")
+
+
+class GhReleaseEditSettings(GhCommandSettings):
+    """Settings for `gh release edit`."""
+
+    def tag(self, name: str) -> Self:
+        """The release to edit, by its current tag (required)."""
+        return self._record("tag", name)
+
+    def new_tag(self, name: str) -> Self:
+        """Move the release to a different tag (`--tag`)."""
+        return self._record("newTag", name)
+
+    def title(self, text: str) -> Self:
+        """Set the title (`--title`)."""
+        return self._record("title", text)
+
+    def notes(self, text: str) -> Self:
+        """Set the notes (`--notes`)."""
+        return self._record("notes", text)
+
+    def notes_file(self, path: str) -> Self:
+        """Read the notes from a file (`--notes-file`); `-` reads standard input."""
+        return self._record("notesFile", path)
+
+    def draft(self) -> Self:
+        """Make it a draft (`--draft`)."""
+        return self._record("draft")
+
+    def prerelease(self) -> Self:
+        """Mark it a prerelease (`--prerelease`)."""
+        return self._record("prerelease")
+
+    def latest(self) -> Self:
+        """Mark it the latest release (`--latest`)."""
+        return self._record("latest")
+
+    def target(self, branch_or_sha: str) -> Self:
+        """Change the target branch or commit (`--target`)."""
+        return self._record("target", branch_or_sha)
+
+    def discussion_category(self, name: str) -> Self:
+        """Open a discussion in this category when publishing (`--discussion-category`)."""
+        return self._record("discussionCategory", name)
+
+    def verify_tag(self) -> Self:
+        """Abort unless the tag exists on the remote (`--verify-tag`)."""
+        return self._record("verifyTag")
+
+
+class GhReleaseListSettings(GhReadSettings):
+    """Settings for `gh release list`."""
+
+    def limit(self, count: float) -> Self:
+        """Cap how many are fetched (`--limit`); gh's default is 30."""
+        return self._record("limit", count)
+
+    def order(self, direction: Literal["asc", "desc"]) -> Self:
+        """The order they come back in (`--order`): `asc` or `desc`."""
+        return self._record("order", direction)
+
+    def exclude_drafts(self) -> Self:
+        """Leave out drafts (`--exclude-drafts`)."""
+        return self._record("excludeDrafts")
+
+    def exclude_pre_releases(self) -> Self:
+        """Leave out prereleases (`--exclude-pre-releases`)."""
+        return self._record("excludePreReleases")
+
+
+class GhReleaseUploadSettings(GhCommandSettings):
+    """Settings for `gh release upload`."""
+
+    def tag(self, name: str) -> Self:
+        """The release's tag (required)."""
+        return self._record("tag", name)
+
+    def files(self, *paths: str) -> Self:
+        """Asset files to attach (required); repeatable. gh reads a `#label` suffix
+        on a path as the asset's display label.
+        """
+        return self._record("files", *paths)
+
+    def clobber(self) -> Self:
+        """Replace an asset of the same name (`--clobber`)."""
+        return self._record("clobber")
+
+
+class GhReleaseViewSettings(GhWebReadSettings):
+    """Settings for `gh release view`."""
+
+    def tag(self, name: str) -> Self:
+        """The release's tag; gh shows the latest release when it is omitted."""
+        return self._record("tag", name)
+
+
+class GhRunTargetSettings(GhCommandSettings):
+    """Base for the `run` commands that name one run. gh prompts for a run when the
+    operand is omitted, so unlike a pull request there is no useful default.
+    """
+
+    def selector(self, run_id: str | float) -> Self:
+        """The run — its id (required)."""
+        return self._record("selector", run_id)
+
+
+class GhRunCancelSettings(GhRunTargetSettings):
+    """Settings for `gh run cancel`."""
+
+    def force(self) -> Self:
+        """Cancel a run the ordinary request will not stop (`--force`)."""
+        return self._record("force")
+
+
+class GhRunDeleteSettings(GhRunTargetSettings):
+    """Settings for `gh run delete`."""
+
+
+class GhRunDownloadSettings(GhRunTargetSettings):
+    """Settings for `gh run download`."""
+
+    def name(self, *names: str) -> Self:
+        """Only artifacts with this exact name (`--name`); repeatable."""
+        return self._record("name", *names)
+
+    def pattern(self, *globs: str) -> Self:
+        """Only artifacts matching this glob (`--pattern`); repeatable."""
+        return self._record("pattern", *globs)
+
+    def dir(self, path: str) -> Self:
+        """The directory to download into (`--dir`); gh's default is the cwd."""
+        return self._record("dir", path)
+
+
+class GhRunListSettings(GhReadSettings):
+    """Settings for `gh run list`."""
+
+    def all(self) -> Self:
+        """Include runs of disabled workflows (`--all`)."""
+        return self._record("all")
+
+    def branch(self, name: str) -> Self:
+        """Filter by branch (`--branch`)."""
+        return self._record("branch", name)
+
+    def commit(self, sha: str) -> Self:
+        """Filter by the commit that triggered them (`--commit`)."""
+        return self._record("commit", sha)
+
+    def created(self, query: str) -> Self:
+        """Filter by creation date (`--created`), in GitHub's date-query syntax."""
+        return self._record("created", query)
+
+    def event(self, name: str) -> Self:
+        """Filter by the event that triggered them (`--event`)."""
+        return self._record("event", name)
+
+    def status(
+        self,
+        value: Literal[
+            "queued",
+            "completed",
+            "in_progress",
+            "requested",
+            "waiting",
+            "pending",
+            "action_required",
+            "cancelled",
+            "failure",
+            "neutral",
+            "skipped",
+            "stale",
+            "startup_failure",
+            "success",
+            "timed_out",
+        ],
+    ) -> Self:
+        """Filter by status or conclusion (`--status`)."""
+        return self._record("status", value)
+
+    def user(self, login: str) -> Self:
+        """Filter by the user who triggered them (`--user`)."""
+        return self._record("user", login)
+
+    def workflow(self, name_or_id: str) -> Self:
+        """Filter by workflow, by name, id, or file name (`--workflow`)."""
+        return self._record("workflow", name_or_id)
+
+    def limit(self, count: float) -> Self:
+        """Cap how many are fetched (`--limit`); gh's default is 20."""
+        return self._record("limit", count)
+
+
+class GhRunRerunSettings(GhRunTargetSettings):
+    """Settings for `gh run rerun`."""
+
+    def failed(self) -> Self:
+        """Rerun only the failed jobs and their dependencies (`--failed`)."""
+        return self._record("failed")
+
+    def job(self, job_id: str | float) -> Self:
+        """Rerun one job and its dependencies (`--job`), by job id."""
+        return self._record("job", job_id)
+
+    def debug(self) -> Self:
+        """Rerun with debug logging enabled (`--debug`)."""
+        return self._record("debug")
+
+
+class GhRunViewSettings(GhWebReadSettings):
+    """Settings for `gh run view`."""
+
+    def selector(self, run_id: str | float) -> Self:
+        """The run — its id; gh shows a picker without one."""
+        return self._record("selector", run_id)
+
+    def attempt(self, number: float) -> Self:
+        """View an earlier attempt (`--attempt`)."""
+        return self._record("attempt", number)
+
+    def job(self, job_id: str | float) -> Self:
+        """View one job of the run (`--job`), by job id."""
+        return self._record("job", job_id)
+
+    def log(self) -> Self:
+        """Print the full log (`--log`)."""
+        return self._record("log")
+
+    def log_failed(self) -> Self:
+        """Print only the failed steps' log (`--log-failed`)."""
+        return self._record("logFailed")
+
+    def exit_status(self) -> Self:
+        """Exit non-zero when the run failed (`--exit-status`)."""
+        return self._record("exitStatus")
+
+    def verbose(self) -> Self:
+        """Include the individual job steps (`--verbose`)."""
+        return self._record("verbose")
+
+
+class GhRunWatchSettings(GhRunTargetSettings):
+    """Settings for `gh run watch`."""
+
+    def compact(self) -> Self:
+        """Report only the relevant and failed steps (`--compact`)."""
+        return self._record("compact")
+
+    def exit_status(self) -> Self:
+        """Exit non-zero when the run fails (`--exit-status`)."""
+        return self._record("exitStatus")
+
+    def interval(self, seconds: float) -> Self:
+        """Seconds between refreshes (`--interval`); gh's default is 3."""
+        return self._record("interval", seconds)
+
+
+class GhWorkflowTargetSettings(GhCommandSettings):
+    """Base for the `workflow` commands that name one workflow, which gh takes by
+    file name, name, or numeric id.
+    """
+
+    def workflow(self, name_or_id: str | float) -> Self:
+        """The workflow — its file name, its name, or its id (required)."""
+        return self._record("workflow", name_or_id)
+
+
+class GhWorkflowDisableSettings(GhWorkflowTargetSettings):
+    """Settings for `gh workflow disable`."""
+
+
+class GhWorkflowEnableSettings(GhWorkflowTargetSettings):
+    """Settings for `gh workflow enable`."""
+
+
+class GhWorkflowListSettings(GhReadSettings):
+    """Settings for `gh workflow list`."""
+
+    def all(self) -> Self:
+        """Include disabled workflows (`--all`)."""
+        return self._record("all")
+
+    def limit(self, count: float) -> Self:
+        """Cap how many are fetched (`--limit`); gh's default is 50."""
+        return self._record("limit", count)
+
+
+class GhWorkflowRunSettings(GhWorkflowTargetSettings):
+    """Settings for `gh workflow run` — dispatching a `workflow_dispatch` run."""
+
+    def ref(self, name: str) -> Self:
+        """The branch or tag to run it on (`--ref`)."""
+        return self._record("ref", name)
+
+    def field(self, key: str, value: str | float | bool) -> Self:
+        """An input, as `--field key=value`. gh reads a leading `@` in the value as
+        a file to read, so use rawField for a value that starts with one.
+        """
+        return self._record("field", key, value)
+
+    def raw_field(self, key: str, value: str | float | bool) -> Self:
+        """An input passed verbatim (`--raw-field`), with no `@` file syntax."""
+        return self._record("rawField", key, value)
+
+    def json_input(self) -> Self:
+        """Read the whole input object as JSON on standard input (`--json`)."""
+        return self._record("jsonInput")
+
+
+class GhWorkflowViewSettings(GhWorkflowTargetSettings):
+    """Settings for `gh workflow view`.
+
+    Unlike the other viewing commands this one prints no JSON — gh gives it
+    `--yaml` and `--web` but no `--json` — so it does not carry the read flags.
+    """
+
+    def ref(self, name: str) -> Self:
+        """The branch or tag holding the version to view (`--ref`)."""
+        return self._record("ref", name)
+
+    def yaml(self) -> Self:
+        """Print the workflow's YAML rather than its summary (`--yaml`)."""
+        return self._record("yaml")
+
+    def web(self) -> Self:
+        """Open it in a browser instead of printing it (`--web`). A build has no
+        browser, so this is for a developer running the target by hand.
+        """
+        return self._record("web")
+
+
+class GhSecretScopeSettings(GhCommandSettings):
+    """Base for the `secret` commands that name one scope: the application, and
+    whether the secret belongs to a repository, an organization, an
+    environment, or the authenticated user.
+    """
+
+    def app(
+        self, name: Literal["actions", "agents", "codespaces", "dependabot"]
+    ) -> Self:
+        """Which application reads it (`--app`); gh's default is `actions`."""
+        return self._record("app", name)
+
+    def org(self, name: str) -> Self:
+        """Scope it to an organization (`--org`)."""
+        return self._record("org", name)
+
+    def environment(self, name: str) -> Self:
+        """Scope it to a deployment environment (`--env`)."""
+        return self._record("environment", name)
+
+    def user(self) -> Self:
+        """Scope it to the authenticated user (`--user`)."""
+        return self._record("user")
+
+    def repositories(self, *names: str) -> Self:
+        """Share an organization secret with these repositories (`--repos`)."""
+        return self._record("repositories", *names)
+
+    def visibility(self, value: Literal["all", "private", "selected"]) -> Self:
+        """The visibility of an organization secret (`--visibility`)."""
+        return self._record("visibility", value)
+
+
+class GhSecretDeleteSettings(GhSecretScopeSettings):
+    """Settings for `gh secret delete`."""
+
+    def name(self, value: str) -> Self:
+        """The secret's name (required)."""
+        return self._record("name", value)
+
+
+class GhSecretListSettings(GhReadSettings):
+    """Settings for `gh secret list`."""
+
+    def app(
+        self, name: Literal["actions", "agents", "codespaces", "dependabot"]
+    ) -> Self:
+        """Which application's secrets to list (`--app`)."""
+        return self._record("app", name)
+
+    def org(self, name: str) -> Self:
+        """List an organization's secrets (`--org`)."""
+        return self._record("org", name)
+
+    def environment(self, name: str) -> Self:
+        """List an environment's secrets (`--env`)."""
+        return self._record("environment", name)
+
+    def user(self) -> Self:
+        """List your own secrets (`--user`)."""
+        return self._record("user")
+
+
+class GhSecretSetSettings(GhSecretScopeSettings):
+    """Settings for `gh secret set`."""
+
+    def name(self, value: str) -> Self:
+        """The secret's name (required)."""
+        return self._record("name", value)
+
+    def body(self, value: str) -> Self:
+        """The secret's value (`--body`). Omit it and gh reads standard input, which
+        keeps the value out of the process's arguments — see the module docs.
+        """
+        return self._record("body", value)
+
+    def env_file(self, path: str) -> Self:
+        """Read names and values from a dotenv file (`--env-file`)."""
+        return self._record("envFile", path)
+
+    def no_store(self) -> Self:
+        """Print the encrypted value instead of storing it (`--no-store`)."""
+        return self._record("noStore")
+
+    def no_repos_selected(self) -> Self:
+        """Share the organization secret with no repositories (`--no-repos-selected`)."""
+        return self._record("noReposSelected")
+
+
+class GhVariableDeleteSettings(GhCommandSettings):
+    """Settings for `gh variable delete`."""
+
+    def name(self, value: str) -> Self:
+        """The variable's name (required)."""
+        return self._record("name", value)
+
+    def org(self, name: str) -> Self:
+        """Delete an organization variable (`--org`)."""
+        return self._record("org", name)
+
+    def environment(self, name: str) -> Self:
+        """Delete an environment variable (`--env`)."""
+        return self._record("environment", name)
+
+
+class GhVariableGetSettings(GhReadSettings):
+    """Settings for `gh variable get`."""
+
+    def name(self, value: str) -> Self:
+        """The variable's name (required)."""
+        return self._record("name", value)
+
+    def org(self, name: str) -> Self:
+        """Read an organization variable (`--org`)."""
+        return self._record("org", name)
+
+    def environment(self, name: str) -> Self:
+        """Read an environment variable (`--env`)."""
+        return self._record("environment", name)
+
+
+class GhVariableListSettings(GhReadSettings):
+    """Settings for `gh variable list`."""
+
+    def org(self, name: str) -> Self:
+        """List an organization's variables (`--org`)."""
+        return self._record("org", name)
+
+    def environment(self, name: str) -> Self:
+        """List an environment's variables (`--env`)."""
+        return self._record("environment", name)
+
+
+class GhVariableSetSettings(GhCommandSettings):
+    """Settings for `gh variable set`."""
+
+    def name(self, value: str) -> Self:
+        """The variable's name (required)."""
+        return self._record("name", value)
+
+    def body(self, value: str) -> Self:
+        """Its value (`--body`); omit it and gh reads standard input."""
+        return self._record("body", value)
+
+    def env_file(self, path: str) -> Self:
+        """Read names and values from a dotenv file (`--env-file`)."""
+        return self._record("envFile", path)
+
+    def org(self, name: str) -> Self:
+        """Scope it to an organization (`--org`)."""
+        return self._record("org", name)
+
+    def environment(self, name: str) -> Self:
+        """Scope it to a deployment environment (`--env`)."""
+        return self._record("environment", name)
+
+    def repositories(self, *names: str) -> Self:
+        """Share an organization variable with these repositories (`--repos`)."""
+        return self._record("repositories", *names)
+
+    def visibility(self, value: Literal["all", "private", "selected"]) -> Self:
+        """The visibility of an organization variable (`--visibility`)."""
+        return self._record("visibility", value)
+
+
+class GhCacheDeleteSettings(GhCommandSettings):
+    """Settings for `gh cache delete`."""
+
+    def selector(self, id_or_key: str | float) -> Self:
+        """The cache to delete, by its id or its key."""
+        return self._record("selector", id_or_key)
+
+    def all(self) -> Self:
+        """Delete every cache (`--all`), narrowed by ref when one is set."""
+        return self._record("all")
+
+    def ref(self, name: str) -> Self:
+        """Restrict the deletion to one ref (`--ref`)."""
+        return self._record("ref", name)
+
+    def succeed_on_no_caches(self) -> Self:
+        """Exit zero when there was nothing to delete (`--succeed-on-no-caches`)."""
+        return self._record("succeedOnNoCaches")
+
+
+class GhCacheListSettings(GhReadSettings):
+    """Settings for `gh cache list`."""
+
+    def key(self, prefix: str) -> Self:
+        """Only caches whose key starts with this (`--key`)."""
+        return self._record("key", prefix)
+
+    def ref(self, name: str) -> Self:
+        """Only caches for this ref (`--ref`), e.g. `refs/heads/master`."""
+        return self._record("ref", name)
+
+    def sort(
+        self, field: Literal["created_at", "last_accessed_at", "size_in_bytes"]
+    ) -> Self:
+        """What to order by (`--sort`); gh's default is `last_accessed_at`."""
+        return self._record("sort", field)
+
+    def order(self, direction: Literal["asc", "desc"]) -> Self:
+        """The direction (`--order`): `asc` or `desc`."""
+        return self._record("order", direction)
+
+    def limit(self, count: float) -> Self:
+        """Cap how many are fetched (`--limit`); gh's default is 30."""
+        return self._record("limit", count)
+
+
+class GhLabelCloneSettings(GhCommandSettings):
+    """Settings for `gh label clone`."""
+
+    def source(self, slug: str) -> Self:
+        """The repository to copy the labels from, as `owner/name` (required)."""
+        return self._record("source", slug)
+
+    def force(self) -> Self:
+        """Overwrite labels of the same name in the destination (`--force`)."""
+        return self._record("force")
+
+
+class GhLabelCreateSettings(GhCommandSettings):
+    """Settings for `gh label create`."""
+
+    def name(self, value: str) -> Self:
+        """The label's name (required)."""
+        return self._record("name", value)
+
+    def color(self, hex: str) -> Self:
+        """Its colour (`--color`), as a hex triplet; gh accepts it with or without `#`."""
+        return self._record("color", hex)
+
+    def description(self, text: str) -> Self:
+        """Its description (`--description`)."""
+        return self._record("description", text)
+
+    def force(self) -> Self:
+        """Update the label when it already exists rather than failing (`--force`)."""
+        return self._record("force")
+
+
+class GhLabelDeleteSettings(GhCommandSettings):
+    """Settings for `gh label delete`."""
+
+    def name(self, value: str) -> Self:
+        """The label to delete (required)."""
+        return self._record("name", value)
+
+    def yes(self) -> Self:
+        """Skip the confirmation a delete otherwise prompts for (`--yes`)."""
+        return self._record("yes")
+
+
+class GhLabelEditSettings(GhCommandSettings):
+    """Settings for `gh label edit`."""
+
+    def name(self, value: str) -> Self:
+        """The label to edit, by its current name (required)."""
+        return self._record("name", value)
+
+    def new_name(self, value: str) -> Self:
+        """Rename it (`--name`)."""
+        return self._record("newName", value)
+
+    def color(self, hex: str) -> Self:
+        """Set its colour (`--color`)."""
+        return self._record("color", hex)
+
+    def description(self, text: str) -> Self:
+        """Set its description (`--description`)."""
+        return self._record("description", text)
+
+
+class GhLabelListSettings(GhWebReadSettings):
+    """Settings for `gh label list`."""
+
+    def search(self, query: str) -> Self:
+        """Search names and descriptions (`--search`)."""
+        return self._record("search", query)
+
+    def sort(self, field: Literal["created", "name"]) -> Self:
+        """What to order by (`--sort`); gh's default is `created`."""
+        return self._record("sort", field)
+
+    def order(self, direction: Literal["asc", "desc"]) -> Self:
+        """The direction (`--order`): `asc` or `desc`."""
+        return self._record("order", direction)
+
+    def limit(self, count: float) -> Self:
+        """Cap how many are fetched (`--limit`); gh's default is 30."""
+        return self._record("limit", count)
+
+
+class GhRepoCommandSettings(GhCommandSettings):
+    """Base for the `gh repo` commands that neither print JSON nor take `--repo`.
+    GhRepoListSettings and GhRepoViewSettings do print JSON, so
+    they extend the read bases and call refuseRepoFlag themselves.
+    """
+
+
+class GhRepoArchiveSettings(GhRepoCommandSettings):
+    """Settings for `gh repo archive` and `gh repo unarchive`."""
+
+    def repository(self, slug: str) -> Self:
+        """The repository; gh acts on the current one otherwise."""
+        return self._record("repository", slug)
+
+    def unarchive(self) -> Self:
+        """Restore an archived repository instead — `gh repo unarchive`."""
+        return self._record("unarchive")
+
+    def yes(self) -> Self:
+        """Skip the confirmation gh otherwise prompts for (`--yes`)."""
+        return self._record("yes")
+
+
+class GhRepoCloneSettings(GhRepoCommandSettings):
+    """Settings for `gh repo clone`."""
+
+    def repository(self, slug: str) -> Self:
+        """The repository, as `owner/name` or a URL (required)."""
+        return self._record("repository", slug)
+
+    def directory(self, path: str) -> Self:
+        """The directory to clone into; gh names it after the repository otherwise."""
+        return self._record("directory", path)
+
+    def upstream_remote_name(self, name: str) -> Self:
+        """The remote name for a fork's parent (`--upstream-remote-name`)."""
+        return self._record("upstreamRemoteName", name)
+
+    def no_upstream(self) -> Self:
+        """Do not add the upstream remote when cloning a fork (`--no-upstream`)."""
+        return self._record("noUpstream")
+
+    def git_args(self, *args: str) -> Self:
+        """Flags for the underlying `git clone`, which gh takes after a `--`
+        separator — `.gitArgs("--depth=1")` for a shallow clone.
+        """
+        return self._record("gitArgs", *args)
+
+
+class GhRepoCreateSettings(GhRepoCommandSettings):
+    """Settings for `gh repo create`."""
+
+    def name(self, value: str) -> Self:
+        """The repository's name, or `owner/name` to create it elsewhere (required)."""
+        return self._record("name", value)
+
+    def visibility(self, value: Literal["public", "private", "internal"]) -> Self:
+        """How visible it is: `--public`, `--private`, or `--internal` (required)."""
+        return self._record("visibility", value)
+
+    def description(self, text: str) -> Self:
+        """Its description (`--description`)."""
+        return self._record("description", text)
+
+    def homepage(self, url: str) -> Self:
+        """Its homepage (`--homepage`)."""
+        return self._record("homepage", url)
+
+    def team(self, name: str) -> Self:
+        """Grant an organization team access (`--team`)."""
+        return self._record("team", name)
+
+    def template(self, slug: str) -> Self:
+        """Base it on a template repository (`--template`)."""
+        return self._record("template", slug)
+
+    def gitignore(self, name: str) -> Self:
+        """Start from a gitignore template (`--gitignore`)."""
+        return self._record("gitignore", name)
+
+    def license(self, name: str) -> Self:
+        """Add an open-source license (`--license`)."""
+        return self._record("license", name)
+
+    def source(self, path: str) -> Self:
+        """Create it from a local repository (`--source`)."""
+        return self._record("source", path)
+
+    def remote(self, name: str) -> Self:
+        """The remote name for the new repository (`--remote`)."""
+        return self._record("remote", name)
+
+    def clone(self) -> Self:
+        """Clone it after creating it (`--clone`)."""
+        return self._record("clone")
+
+    def push(self) -> Self:
+        """Push the local commits to it (`--push`)."""
+        return self._record("push")
+
+    def add_readme(self) -> Self:
+        """Add a README (`--add-readme`)."""
+        return self._record("addReadme")
+
+    def include_all_branches(self) -> Self:
+        """Copy every branch of the template, not just its default (`--include-all-branches`)."""
+        return self._record("includeAllBranches")
+
+    def disable_issues(self) -> Self:
+        """Turn issues off (`--disable-issues`)."""
+        return self._record("disableIssues")
+
+    def disable_wiki(self) -> Self:
+        """Turn the wiki off (`--disable-wiki`)."""
+        return self._record("disableWiki")
+
+
+class GhRepoDeleteSettings(GhRepoCommandSettings):
+    """Settings for `gh repo delete`."""
+
+    def repository(self, slug: str) -> Self:
+        """The repository to delete, as `owner/name` (required — see below)."""
+        return self._record("repository", slug)
+
+    def yes(self) -> Self:
+        """Skip the confirmation a delete otherwise prompts for (`--yes`)."""
+        return self._record("yes")
+
+
+class GhRepoEditSettings(GhRepoCommandSettings):
+    """Settings for `gh repo edit`."""
+
+    def repository(self, slug: str) -> Self:
+        """The repository to edit; gh edits the current one otherwise."""
+        return self._record("repository", slug)
+
+    def description(self, text: str) -> Self:
+        """Set the description (`--description`)."""
+        return self._record("description", text)
+
+    def homepage(self, url: str) -> Self:
+        """Set the homepage (`--homepage`)."""
+        return self._record("homepage", url)
+
+    def default_branch(self, name: str) -> Self:
+        """Set the default branch (`--default-branch`)."""
+        return self._record("defaultBranch", name)
+
+    def visibility(self, value: Literal["public", "private", "internal"]) -> Self:
+        """Change the visibility (`--visibility`), which needs acceptVisibilityChangeConsequences."""
+        return self._record("visibility", value)
+
+    def accept_visibility_change_consequences(self) -> Self:
+        """Acknowledge what a visibility change does (`--accept-visibility-change-consequences`)."""
+        return self._record("acceptVisibilityChangeConsequences")
+
+    def add_topic(self, *names: str) -> Self:
+        """Add a topic (`--add-topic`); repeatable."""
+        return self._record("addTopic", *names)
+
+    def remove_topic(self, *names: str) -> Self:
+        """Remove a topic (`--remove-topic`); repeatable."""
+        return self._record("removeTopic", *names)
+
+    def enable_issues(self, enabled: bool | None = None) -> Self:
+        """Turn issues on or off (`--enable-issues`)."""
+        return self._record("enableIssues", enabled)
+
+    def enable_wiki(self, enabled: bool | None = None) -> Self:
+        """Turn the wiki on or off (`--enable-wiki`)."""
+        return self._record("enableWiki", enabled)
+
+    def enable_projects(self, enabled: bool | None = None) -> Self:
+        """Turn projects on or off (`--enable-projects`)."""
+        return self._record("enableProjects", enabled)
+
+    def enable_discussions(self, enabled: bool | None = None) -> Self:
+        """Turn discussions on or off (`--enable-discussions`)."""
+        return self._record("enableDiscussions", enabled)
+
+    def enable_auto_merge(self, enabled: bool | None = None) -> Self:
+        """Turn auto-merge on or off (`--enable-auto-merge`)."""
+        return self._record("enableAutoMerge", enabled)
+
+    def enable_merge_commit(self, enabled: bool | None = None) -> Self:
+        """Allow or forbid merge commits (`--enable-merge-commit`)."""
+        return self._record("enableMergeCommit", enabled)
+
+    def enable_squash_merge(self, enabled: bool | None = None) -> Self:
+        """Allow or forbid squash merges (`--enable-squash-merge`)."""
+        return self._record("enableSquashMerge", enabled)
+
+    def enable_rebase_merge(self, enabled: bool | None = None) -> Self:
+        """Allow or forbid rebase merges (`--enable-rebase-merge`)."""
+        return self._record("enableRebaseMerge", enabled)
+
+    def delete_branch_on_merge(self, enabled: bool | None = None) -> Self:
+        """Delete the head branch after a merge, or stop (`--delete-branch-on-merge`)."""
+        return self._record("deleteBranchOnMerge", enabled)
+
+    def allow_forking(self, enabled: bool | None = None) -> Self:
+        """Allow or forbid forking (`--allow-forking`)."""
+        return self._record("allowForking", enabled)
+
+    def allow_update_branch(self, enabled: bool | None = None) -> Self:
+        """Allow or forbid updating a pull request branch (`--allow-update-branch`)."""
+        return self._record("allowUpdateBranch", enabled)
+
+    def enable_secret_scanning(self, enabled: bool | None = None) -> Self:
+        """Turn secret scanning on or off (`--enable-secret-scanning`)."""
+        return self._record("enableSecretScanning", enabled)
+
+    def enable_secret_scanning_push_protection(
+        self, enabled: bool | None = None
+    ) -> Self:
+        """Turn push protection on or off (`--enable-secret-scanning-push-protection`)."""
+        return self._record("enableSecretScanningPushProtection", enabled)
+
+
+class GhRepoForkSettings(GhRepoCommandSettings):
+    """Settings for `gh repo fork`."""
+
+    def repository(self, slug: str) -> Self:
+        """The repository to fork; gh forks the current one otherwise."""
+        return self._record("repository", slug)
+
+    def org(self, name: str) -> Self:
+        """Create the fork in an organization (`--org`)."""
+        return self._record("org", name)
+
+    def fork_name(self, value: str) -> Self:
+        """Name the fork something else (`--fork-name`)."""
+        return self._record("forkName", value)
+
+    def remote_name(self, value: str) -> Self:
+        """The remote name to add for the fork (`--remote-name`)."""
+        return self._record("remoteName", value)
+
+    def clone(self) -> Self:
+        """Clone the fork after creating it (`--clone`)."""
+        return self._record("clone")
+
+    def remote(self) -> Self:
+        """Add a git remote for the fork (`--remote`)."""
+        return self._record("remote")
+
+    def default_branch_only(self) -> Self:
+        """Fork only the default branch (`--default-branch-only`)."""
+        return self._record("defaultBranchOnly")
+
+    def git_args(self, *args: str) -> Self:
+        """Flags for the underlying `git clone`, passed after a `--` separator."""
+        return self._record("gitArgs", *args)
+
+
+class GhRepoListSettings(GhReadSettings):
+    """Settings for `gh repo list`."""
+
+    def owner(self, login: str) -> Self:
+        """Whose repositories to list; gh lists your own when it is omitted."""
+        return self._record("owner", login)
+
+    def language(self, name: str) -> Self:
+        """Filter by primary language (`--language`)."""
+        return self._record("language", name)
+
+    def topic(self, *names: str) -> Self:
+        """Filter by topic (`--topic`); repeatable."""
+        return self._record("topic", *names)
+
+    def visibility(self, value: Literal["public", "private", "internal"]) -> Self:
+        """Filter by visibility (`--visibility`)."""
+        return self._record("visibility", value)
+
+    def archived(self) -> Self:
+        """Only archived repositories (`--archived`)."""
+        return self._record("archived")
+
+    def no_archived(self) -> Self:
+        """Leave archived repositories out (`--no-archived`)."""
+        return self._record("noArchived")
+
+    def fork(self) -> Self:
+        """Only forks (`--fork`)."""
+        return self._record("fork")
+
+    def source(self) -> Self:
+        """Only repositories that are not forks (`--source`)."""
+        return self._record("source")
+
+    def limit(self, count: float) -> Self:
+        """Cap how many are fetched (`--limit`); gh's default is 30."""
+        return self._record("limit", count)
+
+
+class GhRepoRenameSettings(GhCommandSettings):
+    """Settings for `gh repo rename`."""
+
+    def new_name(self, value: str) -> Self:
+        """The repository's new name, without the owner (required)."""
+        return self._record("newName", value)
+
+    def yes(self) -> Self:
+        """Skip the confirmation a rename otherwise prompts for (`--yes`)."""
+        return self._record("yes")
+
+
+class GhRepoSetDefaultSettings(GhRepoCommandSettings):
+    """Settings for `gh repo set-default`."""
+
+    def repository(self, slug_or_remote: str) -> Self:
+        """The repository to make the default, as `owner/name` or a remote name."""
+        return self._record("repository", slug_or_remote)
+
+    def unset(self) -> Self:
+        """Forget the current default instead (`--unset`)."""
+        return self._record("unset")
+
+    def view(self) -> Self:
+        """Report the current default instead (`--view`)."""
+        return self._record("view")
+
+
+class GhRepoSyncSettings(GhRepoCommandSettings):
+    """Settings for `gh repo sync`."""
+
+    def destination(self, slug: str) -> Self:
+        """The repository to update; gh syncs the local one otherwise."""
+        return self._record("destination", slug)
+
+    def source(self, slug: str) -> Self:
+        """Where to sync from (`--source`); gh uses the fork's parent otherwise."""
+        return self._record("source", slug)
+
+    def branch(self, name: str) -> Self:
+        """The branch to sync (`--branch`); gh uses the default branch otherwise."""
+        return self._record("branch", name)
+
+    def force(self) -> Self:
+        """Hard-reset the destination branch onto the source (`--force`)."""
+        return self._record("force")
+
+
+class GhRepoViewSettings(GhWebReadSettings):
+    """Settings for `gh repo view`."""
+
+    def repository(self, slug: str) -> Self:
+        """The repository, as `owner/name`; gh uses the current one otherwise."""
+        return self._record("repository", slug)
+
+    def branch(self, name: str) -> Self:
+        """View a particular branch (`--branch`)."""
+        return self._record("branch", name)
 
 
 class GhApiSettings(ToolSettings):
@@ -50,16 +1649,1586 @@ class GhApiSettings(ToolSettings):
         return self._record("silent")
 
 
-class GhSettings(SubcommandSettings):
-    """Settings for a `gh` invocation."""
+class GhContentsSettings(Settings):
+    """Settings for creating or updating one file.
+
+    `owner/repo` and the token fall back to the Actions environment, so a job
+    that already has them names only the file.
+    """
+
+    def path(self, value: str) -> Self:
+        """The file's path inside the repository, e.g. `Formula/app.rb` (required).
+        Relative, `/`-separated, with no `.` or `..` segment.
+        """
+        return self._record("path", value)
+
+    def content(self, text: str) -> Self:
+        """The file's new content, as text (required). Written as UTF-8."""
+        return self._record("content", text)
+
+    def message(self, text: str) -> Self:
+        """The commit message (required)."""
+        return self._record("message", text)
+
+    def branch(self, name: str) -> Self:
+        """The branch to write on. Defaults to the repository's default branch."""
+        return self._record("branch", name)
 
     def repo(self, slug: str) -> Self:
-        """Target repository as `OWNER/REPO` (`-R`/`--repo`)."""
+        """`owner/repo`. Defaults to `GITHUB_REPOSITORY`."""
         return self._record("repo", slug)
+
+    def token(self, value: str) -> Self:
+        """The token to authenticate with — needs `contents: write` on the
+        repository. Defaults to `GITHUB_TOKEN`.
+        """
+        return self._record("token", value)
+
+    def base_url(self, url: str) -> Self:
+        """The API root, for GitHub Enterprise."""
+        return self._record("baseUrl", url)
+
+
+class GhAppTokenSettings(Settings):
+    """Settings for GhAppTokenApi.appToken."""
+
+    def app_id(self, id: str | float) -> Self:
+        """The GitHub App's id (the `App ID` on its settings page)."""
+        return self._record("appId", id)
+
+    def private_key(self, pem: str) -> Self:
+        """The app's private key, as the PEM's **contents** — GitHub issues PKCS#1
+        (`BEGIN RSA PRIVATE KEY`); PKCS#8 is accepted too.
+        """
+        return self._record("privateKey", pem)
+
+    def owner(self, login: str) -> Self:
+        """The user or organisation the app is installed on."""
+        return self._record("owner", login)
+
+    def repositories(self, *names: str) -> Self:
+        """Scope the token to these repositories (names only, without the owner).
+        Omit to cover every repository the installation can reach — prefer naming
+        them, so a leaked token is narrow.
+        """
+        return self._record("repositories", *names)
+
+    def permission(self, name: str, level: Literal["read", "write", "admin"]) -> Self:
+        """Request one permission, e.g. `.permission("contents", "write")`. Repeatable.
+        Narrowing to what the target needs beats inheriting the app's full set;
+        requesting more than the installation grants is an error from GitHub.
+
+        The API names multi-word permissions with underscores (`pull_requests`), so
+        a hyphen is normalised to one. That spelling is the trap here:
+        `create-github-app-token` takes its inputs as `permission-pull-requests`,
+        and passing that form straight through is rejected as a permission the
+        installation does not grant — which reads as a misconfigured app rather
+        than a misspelled key.
+        """
+        return self._record("permission", name, level)
+
+    def base_url(self, url: str) -> Self:
+        """Use a different REST base (GitHub Enterprise Server)."""
+        return self._record("baseUrl", url)
+
+
+class GhAppTokenSourceSettings(Settings):
+    """Settings for GhAppTokenApi.appTokenSource."""
+
+    def app(self, app_id: str, private_key: str) -> Self:
+        """The App's credentials — its numeric id and the PEM contents of its
+        private key, as the build's parameters (`.secret()` for the key). Either
+        one unset at call time means "no App": the source yields the
+        fallback. Both are read when the token is first needed, never at
+        construction, so parameters declared on the build resolve first.
+        """
+        return self._record("app", app_id, private_key)
+
+    def repository(self, slug: str) -> Self:
+        """The repository to mint for, as `owner/name`. Defaults to the repository
+        the run is on, `GITHUB_REPOSITORY`. Name it to refuse minting anywhere
+        else: a run whose `GITHUB_REPOSITORY` is another repository then gets the
+        fallback, with a warning, rather than a token for this one minted into a
+        build running elsewhere.
+        """
+        return self._record("repository", slug)
+
+    def permission(self, name: str, level: Literal["read", "write", "admin"]) -> Self:
+        """Narrow the token to one permission, e.g. `.permission("contents", "write")`.
+        Repeatable. Without any, the token holds the installation's whole grant,
+        which is the App's configured permissions — the sane default for an App
+        set up for one job. A hyphenated name is accepted as the mint accepts it.
+        """
+        return self._record("permission", name, level)
+
+    def fallback(self, token: str) -> Self:
+        """The token yielded when no App is configured or the mint fails. Defaults
+        to `GITHUB_TOKEN` from the environment — the workflow's own token, so a
+        build that names an App still posts, as `github-actions[bot]`, wherever
+        the App is absent.
+        """
+        return self._record("fallback", token)
+
+    def base_url(self, url: str) -> Self:
+        """Use a different REST base for the mint (GitHub Enterprise Server)."""
+        return self._record("baseUrl", url)
+
+
+class GhSarifSettings(Settings):
+    """Settings for GhSarifApi.uploadSarif."""
+
+    def file(self, path: str) -> Self:
+        """The SARIF report to upload (required)."""
+        return self._record("file", path)
+
+    def repo(self, slug: str) -> Self:
+        """The `owner/repo` to upload for. Defaults to `GITHUB_REPOSITORY`."""
+        return self._record("repo", slug)
+
+    def commit(self, sha: str) -> Self:
+        """The commit SHA the results describe. Defaults to `GITHUB_SHA`."""
+        return self._record("commit", sha)
+
+    def ref(self, ref: str) -> Self:
+        """The full ref the results describe (`refs/heads/main`). Defaults to `GITHUB_REF`."""
+        return self._record("ref", ref)
+
+    def token(self, value: str) -> Self:
+        """The token to authenticate with — needs `security-events: write`. Defaults to
+        `GITHUB_TOKEN` in the environment, so it never has to reach argv.
+        """
+        return self._record("token", value)
+
+    def checkout_uri(self, uri: str) -> Self:
+        """The URI of the checkout the results are relative to (`file:///…`)."""
+        return self._record("checkoutUri", uri)
+
+    def base_url(self, url: str) -> Self:
+        """Use a different REST base (GitHub Enterprise Server)."""
+        return self._record("baseUrl", url)
+
+
+class GhReleaseAssetSettings(Settings):
+    """Settings for GhReleaseAssetApi.uploadReleaseAsset."""
+
+    def file(self, path: str) -> Self:
+        """The file to upload (required)."""
+        return self._record("file", path)
+
+    def name(self, value: str) -> Self:
+        """The asset's name on the release. Defaults to the file's base name."""
+        return self._record("name", value)
+
+    def content_type(self, value: str) -> Self:
+        """The asset's `content-type`. Defaults by extension (`.tar.gz`/`.tgz`,
+        `.zip`, `.json`), then to `application/octet-stream`.
+        """
+        return self._record("contentType", value)
+
+    def repo(self, slug: str) -> Self:
+        """The `owner/repo` to upload to. Defaults to `GITHUB_REPOSITORY`."""
+        return self._record("repo", slug)
+
+    def tag(self, value: str) -> Self:
+        """Attach to the release with this tag instead of the latest release."""
+        return self._record("tag", value)
+
+    def refresh(self) -> Self:
+        """Replace an asset the release already carries when its bytes differ from
+        the file's — compared by the sha256 digest the API reports — instead of
+        keeping it. An asset whose digest matches, or whose digest the API does
+        not report, is still kept: without a comparison to trust, replacement
+        would churn a published release's assets on every run, which is exactly
+        what the default protects. For an asset that must track its source
+        across runs (an extension archive, a docs bundle) on a long-lived
+        release.
+        """
+        return self._record("refresh")
+
+    def token(self, value: str) -> Self:
+        """The token to authenticate with — needs `contents: write`. Defaults to
+        `GITHUB_TOKEN` in the environment, so it never has to reach argv.
+        """
+        return self._record("token", value)
+
+    def base_url(self, url: str) -> Self:
+        """Use a different REST base (GitHub Enterprise Server)."""
+        return self._record("baseUrl", url)
+
+
+class GhReleaseLatestSettings(Settings):
+    """Settings for marking a release as latest.
+
+    `owner/repo` and the token fall back to the Actions environment, so a job
+    that already has them needs to name only the tag.
+    """
+
+    def tag(self, value: str) -> Self:
+        """The tag whose release the pointer should name (required)."""
+        return self._record("tag", value)
+
+    def repo(self, slug: str) -> Self:
+        """`owner/repo`. Defaults to `GITHUB_REPOSITORY`."""
+        return self._record("repo", slug)
+
+    def token(self, value: str) -> Self:
+        """The token to authenticate with — needs `contents: write`. Defaults to `GITHUB_TOKEN`."""
+        return self._record("token", value)
+
+    def base_url(self, url: str) -> Self:
+        """The API root, for GitHub Enterprise."""
+        return self._record("baseUrl", url)
+
+
+class GhReleaseEnsureSettings(Settings):
+    """Settings for ensuring a release exists.
+
+    `owner/repo` and the token fall back to the Actions environment, so a job
+    that already has them names only the release.
+    """
+
+    def tag(self, value: str) -> Self:
+        """The tag to release (required).
+
+        It should already exist. GitHub creates a missing tag on the default
+        branch rather than refusing, so a typo here publishes a tag as well as a
+        release — which is why the caller that reconciles a backlog reads its tags
+        from git rather than composing them.
+        """
+        return self._record("tag", value)
+
+    def name(self, text: str) -> Self:
+        """The release title (required), e.g. `Zuke Build v1.2.3`."""
+        return self._record("name", text)
+
+    def body(self, text: str) -> Self:
+        """The release notes (required); pass `""` for a release with none."""
+        return self._record("body", text)
+
+    def latest(self, value: bool | None = None) -> Self:
+        """Move the repository's "Latest release" pointer onto this release.
+
+        Off unless asked, which is the opposite of GitHub's own default — it
+        treats a new release as latest unless told otherwise. The default is
+        inverted because the first thing this is used for is back-filling
+        releases a pipeline missed, and those are created oldest-first: taking
+        GitHub's default would walk the pointer backwards through the backlog and
+        leave it on whichever release was created last, which is the oldest one.
+        Naming it explicitly costs the one caller that wants it a method call, and
+        costs the ones that do not want it nothing at all.
+        """
+        return self._record("latest", value)
+
+    def repo(self, slug: str) -> Self:
+        """`owner/repo`. Defaults to `GITHUB_REPOSITORY`."""
+        return self._record("repo", slug)
+
+    def token(self, value: str) -> Self:
+        """The token to authenticate with — needs `contents: write`. Defaults to `GITHUB_TOKEN`."""
+        return self._record("token", value)
+
+    def base_url(self, url: str) -> Self:
+        """The API root, for GitHub Enterprise."""
+        return self._record("baseUrl", url)
 
 
 class GhTasks:
     """Typed task functions for GitHub: the `gh` CLI and the REST-only operations."""
+
+    @staticmethod
+    async def app_token(
+        ctx: ServiceContext,
+        configure: Callable[[GhAppTokenSettings], GhAppTokenSettings] | None = None,
+    ) -> object:
+        """Mint a GitHub App installation token, scoped to the repositories and
+        permissions the settings request. The returned token is registered with the
+        Actions log masker, so it is safe to pass onward through `env`.
+        """
+        return await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "appToken",
+            [configured(GhAppTokenSettings(), configure)],
+        )
+
+    @staticmethod
+    async def app_token_source(
+        ctx: ServiceContext,
+        configure: Callable[[GhAppTokenSourceSettings], GhAppTokenSourceSettings]
+        | None = None,
+    ) -> object:
+        """A token **source** for the App: a function that mints the installation
+        token the first time it is called and returns the same token after, or
+        yields `GITHUB_TOKEN` when the App is not configured — the credential a
+        build hands to an AI reviewer's `.commentToken(...)` so its reviews post
+        as the App where it is installed and as `github-actions[bot]` everywhere
+        else. Nothing runs until the first call.
+
+        ```ts
+        appId = parameter("GitHub App id").env("REVIEW_APP_ID");
+        appKey = parameter("GitHub App key").secret().env("REVIEW_APP_KEY");
+        botToken = GhTasks.appTokenSource((s) => s.app(this.appId, this.appKey));
+        ```
+        """
+        return await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "appTokenSource",
+            [configured(GhAppTokenSourceSettings(), configure)],
+        )
+
+    @staticmethod
+    async def upload_sarif(
+        ctx: ServiceContext,
+        configure: Callable[[GhSarifSettings], GhSarifSettings] | None = None,
+    ) -> object:
+        """Upload a SARIF report to GitHub code scanning, so its findings land in the
+        repository's Security tab. Needs a token with `security-events: write`.
+        """
+        return await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "uploadSarif",
+            [configured(GhSarifSettings(), configure)],
+        )
+
+    @staticmethod
+    async def upload_release_asset(
+        ctx: ServiceContext,
+        configure: Callable[[GhReleaseAssetSettings], GhReleaseAssetSettings]
+        | None = None,
+    ) -> object:
+        """Attach a file to a GitHub release — the latest release by default, or the
+        one named by `.tag(...)`. Idempotent: an asset the release already
+        carries under the same name is kept as-is (unless `.refresh()` asks for
+        one with different bytes to be replaced), and a repository with no
+        releases resolves to `state: "no-release"` rather than throwing. Needs a
+        token with `contents: write`.
+        """
+        return await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "uploadReleaseAsset",
+            [configured(GhReleaseAssetSettings(), configure)],
+        )
+
+    @staticmethod
+    async def mark_release_latest(
+        ctx: ServiceContext,
+        configure: Callable[[GhReleaseLatestSettings], GhReleaseLatestSettings]
+        | None = None,
+    ) -> object:
+        """Point the repository's "Latest release" at the release for `.tag(...)`.
+
+        Idempotent, and quiet about it: a pointer already on the tag's release is
+        left untouched rather than re-written, so an unattended pipeline can run
+        this unconditionally without churning the release's audit history. A tag
+        with no release resolves to `state: "no-release"` rather than throwing —
+        the release may be cut by a later, human step — while a tag that does not
+        exist at all is an error, because the caller named it. Needs a token with
+        `contents: write`.
+        """
+        return await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "markReleaseLatest",
+            [configured(GhReleaseLatestSettings(), configure)],
+        )
+
+    @staticmethod
+    async def ensure_release(
+        ctx: ServiceContext,
+        configure: Callable[[GhReleaseEnsureSettings], GhReleaseEnsureSettings]
+        | None = None,
+    ) -> object:
+        """Publish a release for `.tag(...)` unless it already has one.
+
+        Reads the tag's release first and returns `state: "exists"` when there is
+        one, writing nothing — so an unattended pipeline can run this on every
+        push without overwriting notes a maintainer wrote by hand. Needs a token
+        with `contents: write`.
+        """
+        return await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "ensureRelease",
+            [configured(GhReleaseEnsureSettings(), configure)],
+        )
+
+    @staticmethod
+    async def create_or_update_file(
+        ctx: ServiceContext,
+        configure: Callable[[GhContentsSettings], GhContentsSettings] | None = None,
+    ) -> object:
+        """Write one file through the contents API, creating it or replacing its
+        content — or, when it already holds exactly this content, writing nothing
+        and reporting `unchanged`.
+
+        A write that loses a race (the file changed between the read and the
+        write) is read once more: if the file now holds this content the result is
+        `unchanged`, otherwise the conflict is raised rather than overwritten.
+        """
+        return await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "createOrUpdateFile",
+            [configured(GhContentsSettings(), configure)],
+        )
+
+    @staticmethod
+    async def pr_create(
+        ctx: ServiceContext,
+        configure: Callable[[GhPrCreateSettings], GhPrCreateSettings] | None = None,
+    ) -> ExecResult:
+        """Open a pull request: `gh pr create`. Needs the `gh` binary and its auth;
+        "./pull_request.ts".GhPullRequestApi.pullRequest is the REST path,
+        which needs a token instead.
+        """
+        answer = await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "prCreate",
+            [configured(GhPrCreateSettings(), configure)],
+        )
+        return exec_result(answer)
+
+    @staticmethod
+    async def pr_list(
+        ctx: ServiceContext,
+        configure: Callable[[GhPrListSettings], GhPrListSettings] | None = None,
+    ) -> ExecResult:
+        """List pull requests: `gh pr list`."""
+        answer = await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "prList",
+            [configured(GhPrListSettings(), configure)],
+        )
+        return exec_result(answer)
+
+    @staticmethod
+    async def pr_list_entries(
+        ctx: ServiceContext,
+        configure: Callable[[GhPrListSettings], GhPrListSettings] | None = None,
+    ) -> object:
+        """The pull requests as parsed GhPullRequestEntry values. The
+        `--json` field set is pinned, since gh requires one by name.
+        """
+        return await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "prListEntries",
+            [configured(GhPrListSettings(), configure)],
+        )
+
+    @staticmethod
+    async def pr_view(
+        ctx: ServiceContext,
+        configure: Callable[[GhPrViewSettings], GhPrViewSettings] | None = None,
+    ) -> ExecResult:
+        """Show a pull request: `gh pr view`."""
+        answer = await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "prView",
+            [configured(GhPrViewSettings(), configure)],
+        )
+        return exec_result(answer)
+
+    @staticmethod
+    async def pr_checks(
+        ctx: ServiceContext,
+        configure: Callable[[GhPrChecksSettings], GhPrChecksSettings] | None = None,
+    ) -> ExecResult:
+        """Report a pull request's checks: `gh pr checks`."""
+        answer = await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "prChecks",
+            [configured(GhPrChecksSettings(), configure)],
+        )
+        return exec_result(answer)
+
+    @staticmethod
+    async def pr_merge(
+        ctx: ServiceContext,
+        configure: Callable[[GhPrMergeSettings], GhPrMergeSettings] | None = None,
+    ) -> ExecResult:
+        """Merge a pull request: `gh pr merge`."""
+        answer = await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "prMerge",
+            [configured(GhPrMergeSettings(), configure)],
+        )
+        return exec_result(answer)
+
+    @staticmethod
+    async def pr_comment(
+        ctx: ServiceContext,
+        configure: Callable[[GhPrCommentSettings], GhPrCommentSettings] | None = None,
+    ) -> ExecResult:
+        """Comment on a pull request: `gh pr comment`."""
+        answer = await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "prComment",
+            [configured(GhPrCommentSettings(), configure)],
+        )
+        return exec_result(answer)
+
+    @staticmethod
+    async def pr_edit(
+        ctx: ServiceContext,
+        configure: Callable[[GhPrEditSettings], GhPrEditSettings] | None = None,
+    ) -> ExecResult:
+        """Change a pull request's metadata: `gh pr edit`."""
+        answer = await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "prEdit",
+            [configured(GhPrEditSettings(), configure)],
+        )
+        return exec_result(answer)
+
+    @staticmethod
+    async def pr_close(
+        ctx: ServiceContext,
+        configure: Callable[[GhPrCloseSettings], GhPrCloseSettings] | None = None,
+    ) -> ExecResult:
+        """Close a pull request: `gh pr close`."""
+        answer = await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "prClose",
+            [configured(GhPrCloseSettings(), configure)],
+        )
+        return exec_result(answer)
+
+    @staticmethod
+    async def issue_create(
+        ctx: ServiceContext,
+        configure: Callable[[GhIssueCreateSettings], GhIssueCreateSettings]
+        | None = None,
+    ) -> ExecResult:
+        """Open an issue: `gh issue create`."""
+        answer = await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "issueCreate",
+            [configured(GhIssueCreateSettings(), configure)],
+        )
+        return exec_result(answer)
+
+    @staticmethod
+    async def issue_list(
+        ctx: ServiceContext,
+        configure: Callable[[GhIssueListSettings], GhIssueListSettings] | None = None,
+    ) -> ExecResult:
+        """List issues: `gh issue list`."""
+        answer = await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "issueList",
+            [configured(GhIssueListSettings(), configure)],
+        )
+        return exec_result(answer)
+
+    @staticmethod
+    async def issue_list_entries(
+        ctx: ServiceContext,
+        configure: Callable[[GhIssueListSettings], GhIssueListSettings] | None = None,
+    ) -> object:
+        """The issues as parsed GhIssueEntry values. The `--json` field set
+        is pinned, since gh requires one by name.
+        """
+        return await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "issueListEntries",
+            [configured(GhIssueListSettings(), configure)],
+        )
+
+    @staticmethod
+    async def issue_view(
+        ctx: ServiceContext,
+        configure: Callable[[GhIssueViewSettings], GhIssueViewSettings] | None = None,
+    ) -> ExecResult:
+        """Show an issue: `gh issue view`."""
+        answer = await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "issueView",
+            [configured(GhIssueViewSettings(), configure)],
+        )
+        return exec_result(answer)
+
+    @staticmethod
+    async def issue_comment(
+        ctx: ServiceContext,
+        configure: Callable[[GhIssueCommentSettings], GhIssueCommentSettings]
+        | None = None,
+    ) -> ExecResult:
+        """Comment on an issue: `gh issue comment`."""
+        answer = await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "issueComment",
+            [configured(GhIssueCommentSettings(), configure)],
+        )
+        return exec_result(answer)
+
+    @staticmethod
+    async def issue_close(
+        ctx: ServiceContext,
+        configure: Callable[[GhIssueCloseSettings], GhIssueCloseSettings] | None = None,
+    ) -> ExecResult:
+        """Close an issue: `gh issue close`."""
+        answer = await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "issueClose",
+            [configured(GhIssueCloseSettings(), configure)],
+        )
+        return exec_result(answer)
+
+    @staticmethod
+    async def release_create(
+        ctx: ServiceContext,
+        configure: Callable[[GhReleaseCreateSettings], GhReleaseCreateSettings]
+        | None = None,
+    ) -> ExecResult:
+        """Publish a release: `gh release create`."""
+        answer = await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "releaseCreate",
+            [configured(GhReleaseCreateSettings(), configure)],
+        )
+        return exec_result(answer)
+
+    @staticmethod
+    async def release_list(
+        ctx: ServiceContext,
+        configure: Callable[[GhReleaseListSettings], GhReleaseListSettings]
+        | None = None,
+    ) -> ExecResult:
+        """List releases: `gh release list`."""
+        answer = await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "releaseList",
+            [configured(GhReleaseListSettings(), configure)],
+        )
+        return exec_result(answer)
+
+    @staticmethod
+    async def release_list_entries(
+        ctx: ServiceContext,
+        configure: Callable[[GhReleaseListSettings], GhReleaseListSettings]
+        | None = None,
+    ) -> object:
+        """The releases as parsed GhReleaseEntry values. The `--json` field
+        set is pinned, since gh requires one by name.
+        """
+        return await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "releaseListEntries",
+            [configured(GhReleaseListSettings(), configure)],
+        )
+
+    @staticmethod
+    async def release_view(
+        ctx: ServiceContext,
+        configure: Callable[[GhReleaseViewSettings], GhReleaseViewSettings]
+        | None = None,
+    ) -> ExecResult:
+        """Show a release: `gh release view`."""
+        answer = await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "releaseView",
+            [configured(GhReleaseViewSettings(), configure)],
+        )
+        return exec_result(answer)
+
+    @staticmethod
+    async def release_upload(
+        ctx: ServiceContext,
+        configure: Callable[[GhReleaseUploadSettings], GhReleaseUploadSettings]
+        | None = None,
+    ) -> ExecResult:
+        """Attach assets to a release: `gh release upload`. Needs the `gh` binary;
+        "./release_asset.ts".GhReleaseAssetApi.uploadReleaseAsset is the
+        REST path, which needs a token instead.
+        """
+        answer = await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "releaseUpload",
+            [configured(GhReleaseUploadSettings(), configure)],
+        )
+        return exec_result(answer)
+
+    @staticmethod
+    async def release_download(
+        ctx: ServiceContext,
+        configure: Callable[[GhReleaseDownloadSettings], GhReleaseDownloadSettings]
+        | None = None,
+    ) -> ExecResult:
+        """Download a release's assets: `gh release download`."""
+        answer = await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "releaseDownload",
+            [configured(GhReleaseDownloadSettings(), configure)],
+        )
+        return exec_result(answer)
+
+    @staticmethod
+    async def release_edit(
+        ctx: ServiceContext,
+        configure: Callable[[GhReleaseEditSettings], GhReleaseEditSettings]
+        | None = None,
+    ) -> ExecResult:
+        """Change a release: `gh release edit`."""
+        answer = await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "releaseEdit",
+            [configured(GhReleaseEditSettings(), configure)],
+        )
+        return exec_result(answer)
+
+    @staticmethod
+    async def release_delete(
+        ctx: ServiceContext,
+        configure: Callable[[GhReleaseDeleteSettings], GhReleaseDeleteSettings]
+        | None = None,
+    ) -> ExecResult:
+        """Remove a release: `gh release delete`."""
+        answer = await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "releaseDelete",
+            [configured(GhReleaseDeleteSettings(), configure)],
+        )
+        return exec_result(answer)
+
+    @staticmethod
+    async def run_list(
+        ctx: ServiceContext,
+        configure: Callable[[GhRunListSettings], GhRunListSettings] | None = None,
+    ) -> ExecResult:
+        """List workflow runs: `gh run list`."""
+        answer = await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "runList",
+            [configured(GhRunListSettings(), configure)],
+        )
+        return exec_result(answer)
+
+    @staticmethod
+    async def run_list_entries(
+        ctx: ServiceContext,
+        configure: Callable[[GhRunListSettings], GhRunListSettings] | None = None,
+    ) -> object:
+        """The runs as parsed GhRunEntry values — the reader a build branches
+        on. The `--json` field set is pinned, since gh requires one by name.
+        """
+        return await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "runListEntries",
+            [configured(GhRunListSettings(), configure)],
+        )
+
+    @staticmethod
+    async def run_view(
+        ctx: ServiceContext,
+        configure: Callable[[GhRunViewSettings], GhRunViewSettings] | None = None,
+    ) -> ExecResult:
+        """Show a run: `gh run view`."""
+        answer = await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "runView",
+            [configured(GhRunViewSettings(), configure)],
+        )
+        return exec_result(answer)
+
+    @staticmethod
+    async def run_rerun(
+        ctx: ServiceContext,
+        configure: Callable[[GhRunRerunSettings], GhRunRerunSettings] | None = None,
+    ) -> ExecResult:
+        """Rerun a run, or its failed jobs: `gh run rerun`."""
+        answer = await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "runRerun",
+            [configured(GhRunRerunSettings(), configure)],
+        )
+        return exec_result(answer)
+
+    @staticmethod
+    async def run_cancel(
+        ctx: ServiceContext,
+        configure: Callable[[GhRunCancelSettings], GhRunCancelSettings] | None = None,
+    ) -> ExecResult:
+        """Stop a run: `gh run cancel`."""
+        answer = await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "runCancel",
+            [configured(GhRunCancelSettings(), configure)],
+        )
+        return exec_result(answer)
+
+    @staticmethod
+    async def run_delete(
+        ctx: ServiceContext,
+        configure: Callable[[GhRunDeleteSettings], GhRunDeleteSettings] | None = None,
+    ) -> ExecResult:
+        """Remove a run: `gh run delete`."""
+        answer = await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "runDelete",
+            [configured(GhRunDeleteSettings(), configure)],
+        )
+        return exec_result(answer)
+
+    @staticmethod
+    async def run_download(
+        ctx: ServiceContext,
+        configure: Callable[[GhRunDownloadSettings], GhRunDownloadSettings]
+        | None = None,
+    ) -> ExecResult:
+        """Fetch a run's artifacts: `gh run download`."""
+        answer = await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "runDownload",
+            [configured(GhRunDownloadSettings(), configure)],
+        )
+        return exec_result(answer)
+
+    @staticmethod
+    async def run_watch(
+        ctx: ServiceContext,
+        configure: Callable[[GhRunWatchSettings], GhRunWatchSettings] | None = None,
+    ) -> ExecResult:
+        """Follow a run until it finishes: `gh run watch`. A target that watches
+        blocks until Actions is done, so pair it with `.killAfter(...)` unless
+        the wait is the point.
+        """
+        answer = await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "runWatch",
+            [configured(GhRunWatchSettings(), configure)],
+        )
+        return exec_result(answer)
+
+    @staticmethod
+    async def workflow_list(
+        ctx: ServiceContext,
+        configure: Callable[[GhWorkflowListSettings], GhWorkflowListSettings]
+        | None = None,
+    ) -> ExecResult:
+        """List workflows: `gh workflow list`."""
+        answer = await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "workflowList",
+            [configured(GhWorkflowListSettings(), configure)],
+        )
+        return exec_result(answer)
+
+    @staticmethod
+    async def workflow_list_entries(
+        ctx: ServiceContext,
+        configure: Callable[[GhWorkflowListSettings], GhWorkflowListSettings]
+        | None = None,
+    ) -> object:
+        """The workflows as parsed GhWorkflowEntry values. The `--json` field
+        set is pinned, since gh requires one by name.
+        """
+        return await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "workflowListEntries",
+            [configured(GhWorkflowListSettings(), configure)],
+        )
+
+    @staticmethod
+    async def workflow_view(
+        ctx: ServiceContext,
+        configure: Callable[[GhWorkflowViewSettings], GhWorkflowViewSettings]
+        | None = None,
+    ) -> ExecResult:
+        """Show a workflow, or its YAML: `gh workflow view`."""
+        answer = await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "workflowView",
+            [configured(GhWorkflowViewSettings(), configure)],
+        )
+        return exec_result(answer)
+
+    @staticmethod
+    async def workflow_run(
+        ctx: ServiceContext,
+        configure: Callable[[GhWorkflowRunSettings], GhWorkflowRunSettings]
+        | None = None,
+    ) -> ExecResult:
+        """Dispatch a workflow: `gh workflow run`. This returns once the dispatch is
+        accepted; "./workflow.ts".githubWorkflow is the wait trigger that
+        suspends the build until the run finishes.
+        """
+        answer = await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "workflowRun",
+            [configured(GhWorkflowRunSettings(), configure)],
+        )
+        return exec_result(answer)
+
+    @staticmethod
+    async def workflow_enable(
+        ctx: ServiceContext,
+        configure: Callable[[GhWorkflowEnableSettings], GhWorkflowEnableSettings]
+        | None = None,
+    ) -> ExecResult:
+        """Turn a workflow on: `gh workflow enable`."""
+        answer = await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "workflowEnable",
+            [configured(GhWorkflowEnableSettings(), configure)],
+        )
+        return exec_result(answer)
+
+    @staticmethod
+    async def workflow_disable(
+        ctx: ServiceContext,
+        configure: Callable[[GhWorkflowDisableSettings], GhWorkflowDisableSettings]
+        | None = None,
+    ) -> ExecResult:
+        """Turn a workflow off: `gh workflow disable`."""
+        answer = await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "workflowDisable",
+            [configured(GhWorkflowDisableSettings(), configure)],
+        )
+        return exec_result(answer)
+
+    @staticmethod
+    async def secret_set(
+        ctx: ServiceContext,
+        configure: Callable[[GhSecretSetSettings], GhSecretSetSettings] | None = None,
+    ) -> ExecResult:
+        """Store a secret: `gh secret set`. A value passed as `.body(...)` becomes an
+        argv entry and is readable in a process listing — see the module docs of
+        "./secret.ts".GhSecretSetSettings for the alternatives.
+        """
+        answer = await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "secretSet",
+            [configured(GhSecretSetSettings(), configure)],
+        )
+        return exec_result(answer)
+
+    @staticmethod
+    async def secret_list(
+        ctx: ServiceContext,
+        configure: Callable[[GhSecretListSettings], GhSecretListSettings] | None = None,
+    ) -> ExecResult:
+        """List the secrets' names: `gh secret list`."""
+        answer = await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "secretList",
+            [configured(GhSecretListSettings(), configure)],
+        )
+        return exec_result(answer)
+
+    @staticmethod
+    async def secret_list_entries(
+        ctx: ServiceContext,
+        configure: Callable[[GhSecretListSettings], GhSecretListSettings] | None = None,
+    ) -> object:
+        """The secrets as parsed GhSecretEntry values — names and metadata;
+        GitHub never returns a secret's value.
+        """
+        return await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "secretListEntries",
+            [configured(GhSecretListSettings(), configure)],
+        )
+
+    @staticmethod
+    async def secret_delete(
+        ctx: ServiceContext,
+        configure: Callable[[GhSecretDeleteSettings], GhSecretDeleteSettings]
+        | None = None,
+    ) -> ExecResult:
+        """Remove a secret: `gh secret delete`."""
+        answer = await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "secretDelete",
+            [configured(GhSecretDeleteSettings(), configure)],
+        )
+        return exec_result(answer)
+
+    @staticmethod
+    async def variable_set(
+        ctx: ServiceContext,
+        configure: Callable[[GhVariableSetSettings], GhVariableSetSettings]
+        | None = None,
+    ) -> ExecResult:
+        """Store a variable: `gh variable set`."""
+        answer = await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "variableSet",
+            [configured(GhVariableSetSettings(), configure)],
+        )
+        return exec_result(answer)
+
+    @staticmethod
+    async def variable_get(
+        ctx: ServiceContext,
+        configure: Callable[[GhVariableGetSettings], GhVariableGetSettings]
+        | None = None,
+    ) -> ExecResult:
+        """Read a variable: `gh variable get`."""
+        answer = await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "variableGet",
+            [configured(GhVariableGetSettings(), configure)],
+        )
+        return exec_result(answer)
+
+    @staticmethod
+    async def variable_value(
+        ctx: ServiceContext,
+        configure: Callable[[GhVariableGetSettings], GhVariableGetSettings]
+        | None = None,
+    ) -> object:
+        """A variable's value, with the trailing newline gh prints removed."""
+        return await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "variableValue",
+            [configured(GhVariableGetSettings(), configure)],
+        )
+
+    @staticmethod
+    async def variable_list(
+        ctx: ServiceContext,
+        configure: Callable[[GhVariableListSettings], GhVariableListSettings]
+        | None = None,
+    ) -> ExecResult:
+        """List variables: `gh variable list`."""
+        answer = await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "variableList",
+            [configured(GhVariableListSettings(), configure)],
+        )
+        return exec_result(answer)
+
+    @staticmethod
+    async def variable_list_entries(
+        ctx: ServiceContext,
+        configure: Callable[[GhVariableListSettings], GhVariableListSettings]
+        | None = None,
+    ) -> object:
+        """The variables as parsed GhVariableEntry values, values included —
+        a variable is not a secret.
+        """
+        return await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "variableListEntries",
+            [configured(GhVariableListSettings(), configure)],
+        )
+
+    @staticmethod
+    async def variable_delete(
+        ctx: ServiceContext,
+        configure: Callable[[GhVariableDeleteSettings], GhVariableDeleteSettings]
+        | None = None,
+    ) -> ExecResult:
+        """Remove a variable: `gh variable delete`."""
+        answer = await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "variableDelete",
+            [configured(GhVariableDeleteSettings(), configure)],
+        )
+        return exec_result(answer)
+
+    @staticmethod
+    async def cache_list(
+        ctx: ServiceContext,
+        configure: Callable[[GhCacheListSettings], GhCacheListSettings] | None = None,
+    ) -> ExecResult:
+        """List the Actions caches: `gh cache list`."""
+        answer = await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "cacheList",
+            [configured(GhCacheListSettings(), configure)],
+        )
+        return exec_result(answer)
+
+    @staticmethod
+    async def cache_list_entries(
+        ctx: ServiceContext,
+        configure: Callable[[GhCacheListSettings], GhCacheListSettings] | None = None,
+    ) -> object:
+        """The caches as parsed GhCacheEntry values — what a build reads to
+        decide which ones to reclaim.
+        """
+        return await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "cacheListEntries",
+            [configured(GhCacheListSettings(), configure)],
+        )
+
+    @staticmethod
+    async def cache_delete(
+        ctx: ServiceContext,
+        configure: Callable[[GhCacheDeleteSettings], GhCacheDeleteSettings]
+        | None = None,
+    ) -> ExecResult:
+        """Reclaim caches: `gh cache delete`."""
+        answer = await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "cacheDelete",
+            [configured(GhCacheDeleteSettings(), configure)],
+        )
+        return exec_result(answer)
+
+    @staticmethod
+    async def repo_clone(
+        ctx: ServiceContext,
+        configure: Callable[[GhRepoCloneSettings], GhRepoCloneSettings] | None = None,
+    ) -> ExecResult:
+        """Clone a repository: `gh repo clone`."""
+        answer = await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "repoClone",
+            [configured(GhRepoCloneSettings(), configure)],
+        )
+        return exec_result(answer)
+
+    @staticmethod
+    async def repo_create(
+        ctx: ServiceContext,
+        configure: Callable[[GhRepoCreateSettings], GhRepoCreateSettings] | None = None,
+    ) -> ExecResult:
+        """Create a repository: `gh repo create`."""
+        answer = await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "repoCreate",
+            [configured(GhRepoCreateSettings(), configure)],
+        )
+        return exec_result(answer)
+
+    @staticmethod
+    async def repo_view(
+        ctx: ServiceContext,
+        configure: Callable[[GhRepoViewSettings], GhRepoViewSettings] | None = None,
+    ) -> ExecResult:
+        """Show a repository: `gh repo view`."""
+        answer = await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "repoView",
+            [configured(GhRepoViewSettings(), configure)],
+        )
+        return exec_result(answer)
+
+    @staticmethod
+    async def repo_list(
+        ctx: ServiceContext,
+        configure: Callable[[GhRepoListSettings], GhRepoListSettings] | None = None,
+    ) -> ExecResult:
+        """List repositories: `gh repo list`."""
+        answer = await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "repoList",
+            [configured(GhRepoListSettings(), configure)],
+        )
+        return exec_result(answer)
+
+    @staticmethod
+    async def repo_list_entries(
+        ctx: ServiceContext,
+        configure: Callable[[GhRepoListSettings], GhRepoListSettings] | None = None,
+    ) -> object:
+        """The repositories as parsed GhRepositoryEntry values. The `--json`
+        field set is pinned, since gh requires one by name.
+        """
+        return await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "repoListEntries",
+            [configured(GhRepoListSettings(), configure)],
+        )
+
+    @staticmethod
+    async def repo_fork(
+        ctx: ServiceContext,
+        configure: Callable[[GhRepoForkSettings], GhRepoForkSettings] | None = None,
+    ) -> ExecResult:
+        """Fork a repository: `gh repo fork`."""
+        answer = await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "repoFork",
+            [configured(GhRepoForkSettings(), configure)],
+        )
+        return exec_result(answer)
+
+    @staticmethod
+    async def repo_sync(
+        ctx: ServiceContext,
+        configure: Callable[[GhRepoSyncSettings], GhRepoSyncSettings] | None = None,
+    ) -> ExecResult:
+        """Bring a fork up to date: `gh repo sync`."""
+        answer = await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "repoSync",
+            [configured(GhRepoSyncSettings(), configure)],
+        )
+        return exec_result(answer)
+
+    @staticmethod
+    async def repo_edit(
+        ctx: ServiceContext,
+        configure: Callable[[GhRepoEditSettings], GhRepoEditSettings] | None = None,
+    ) -> ExecResult:
+        """Change a repository's settings: `gh repo edit`."""
+        answer = await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "repoEdit",
+            [configured(GhRepoEditSettings(), configure)],
+        )
+        return exec_result(answer)
+
+    @staticmethod
+    async def repo_rename(
+        ctx: ServiceContext,
+        configure: Callable[[GhRepoRenameSettings], GhRepoRenameSettings] | None = None,
+    ) -> ExecResult:
+        """Rename a repository: `gh repo rename`."""
+        answer = await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "repoRename",
+            [configured(GhRepoRenameSettings(), configure)],
+        )
+        return exec_result(answer)
+
+    @staticmethod
+    async def repo_archive(
+        ctx: ServiceContext,
+        configure: Callable[[GhRepoArchiveSettings], GhRepoArchiveSettings]
+        | None = None,
+    ) -> ExecResult:
+        """Archive or unarchive a repository: `gh repo archive`/`unarchive`."""
+        answer = await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "repoArchive",
+            [configured(GhRepoArchiveSettings(), configure)],
+        )
+        return exec_result(answer)
+
+    @staticmethod
+    async def repo_delete(
+        ctx: ServiceContext,
+        configure: Callable[[GhRepoDeleteSettings], GhRepoDeleteSettings] | None = None,
+    ) -> ExecResult:
+        """Delete a repository: `gh repo delete`. Needs the `delete_repo` scope."""
+        answer = await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "repoDelete",
+            [configured(GhRepoDeleteSettings(), configure)],
+        )
+        return exec_result(answer)
+
+    @staticmethod
+    async def repo_set_default(
+        ctx: ServiceContext,
+        configure: Callable[[GhRepoSetDefaultSettings], GhRepoSetDefaultSettings]
+        | None = None,
+    ) -> ExecResult:
+        """Choose the repository gh acts on by default: `gh repo set-default`."""
+        answer = await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "repoSetDefault",
+            [configured(GhRepoSetDefaultSettings(), configure)],
+        )
+        return exec_result(answer)
+
+    @staticmethod
+    async def label_list(
+        ctx: ServiceContext,
+        configure: Callable[[GhLabelListSettings], GhLabelListSettings] | None = None,
+    ) -> ExecResult:
+        """List labels: `gh label list`."""
+        answer = await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "labelList",
+            [configured(GhLabelListSettings(), configure)],
+        )
+        return exec_result(answer)
+
+    @staticmethod
+    async def label_list_entries(
+        ctx: ServiceContext,
+        configure: Callable[[GhLabelListSettings], GhLabelListSettings] | None = None,
+    ) -> object:
+        """The labels as parsed GhLabelEntry values. The `--json` field set
+        is pinned, since gh requires one by name.
+        """
+        return await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "labelListEntries",
+            [configured(GhLabelListSettings(), configure)],
+        )
+
+    @staticmethod
+    async def label_create(
+        ctx: ServiceContext,
+        configure: Callable[[GhLabelCreateSettings], GhLabelCreateSettings]
+        | None = None,
+    ) -> ExecResult:
+        """Add a label: `gh label create`."""
+        answer = await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "labelCreate",
+            [configured(GhLabelCreateSettings(), configure)],
+        )
+        return exec_result(answer)
+
+    @staticmethod
+    async def label_edit(
+        ctx: ServiceContext,
+        configure: Callable[[GhLabelEditSettings], GhLabelEditSettings] | None = None,
+    ) -> ExecResult:
+        """Change a label: `gh label edit`."""
+        answer = await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "labelEdit",
+            [configured(GhLabelEditSettings(), configure)],
+        )
+        return exec_result(answer)
+
+    @staticmethod
+    async def label_delete(
+        ctx: ServiceContext,
+        configure: Callable[[GhLabelDeleteSettings], GhLabelDeleteSettings]
+        | None = None,
+    ) -> ExecResult:
+        """Remove a label: `gh label delete`."""
+        answer = await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "labelDelete",
+            [configured(GhLabelDeleteSettings(), configure)],
+        )
+        return exec_result(answer)
+
+    @staticmethod
+    async def label_clone(
+        ctx: ServiceContext,
+        configure: Callable[[GhLabelCloneSettings], GhLabelCloneSettings] | None = None,
+    ) -> ExecResult:
+        """Copy another repository's labels: `gh label clone`."""
+        answer = await call(
+            ctx,
+            PACKAGE,
+            VERSION,
+            "GhTasks",
+            "labelClone",
+            [configured(GhLabelCloneSettings(), configure)],
+        )
+        return exec_result(answer)
 
     @staticmethod
     async def run(
