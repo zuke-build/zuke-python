@@ -24,7 +24,7 @@ jobs:
         with:
           egress-policy: block
           persist-credentials: "false"
-          allowed-endpoints: "deno.land:443 dl.deno.land:443 jsr.io:443 github.com:443 api.github.com:443 codeload.github.com:443 objects.githubusercontent.com:443 release-assets.githubusercontent.com:443 pypi.org:443 files.pythonhosted.org:443 api.openai.com:443"
+          allowed-endpoints: "github.com:443 api.github.com:443 codeload.github.com:443 objects.githubusercontent.com:443 release-assets.githubusercontent.com:443 pypi.org:443 files.pythonhosted.org:443 api.openai.com:443"
       - name: Install uv
         shell: bash
         run: pipx install uv
@@ -52,7 +52,7 @@ jobs:
         with:
           egress-policy: block
           persist-credentials: "false"
-          allowed-endpoints: "deno.land:443 dl.deno.land:443 jsr.io:443 github.com:443 api.github.com:443 codeload.github.com:443 objects.githubusercontent.com:443 release-assets.githubusercontent.com:443 pypi.org:443 files.pythonhosted.org:443 api.openai.com:443"
+          allowed-endpoints: "github.com:443 api.github.com:443 codeload.github.com:443 objects.githubusercontent.com:443 release-assets.githubusercontent.com:443 pypi.org:443 files.pythonhosted.org:443 api.openai.com:443"
       - name: Install uv
         shell: bash
         run: pipx install uv

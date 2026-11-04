@@ -35,7 +35,6 @@ from zuke._generate import generate
 from zuke._guard import is_list, record, string
 from zuke._reference import reference
 from zuke.tools.ai import AiTasks, Reviewer, ReviewSettings
-from zuke.tools.deno import DenoTasks
 from zuke.tools.gh import GhAppTokenSettings, GhTasks
 from zuke.tools.git import GitTasks
 
@@ -66,10 +65,6 @@ TOOL_SPEC = "packages/engine/spec/tools.json"
 """The spec's path in the engine repository."""
 TOOLS = Path(__file__).parent / "src" / "zuke" / "tools"
 """Where the facades the spec generates are committed."""
-LOCK = Path(__file__).parent / "deno.lock"
-"""The lock the launchers run the engine, and every wrapper it imports, frozen to."""
-ZUKE_JSON = Path(__file__).parent / "zuke.json"
-"""Where the launchers read the engine version they run."""
 ENGINE_REPO = "zuke-build/zuke"
 """The engine repository this SDK follows."""
 SDK_REPO = "zuke-build/zuke-python"
@@ -109,9 +104,6 @@ UV_STEPS = [
 ]
 """The steps every job runs before a launcher: the environment the worker needs."""
 ENDPOINTS = [
-    "deno.land:443",
-    "dl.deno.land:443",
-    "jsr.io:443",
     "github.com:443",
     "api.github.com:443",
     "codeload.github.com:443",
@@ -121,7 +113,7 @@ ENDPOINTS = [
     "files.pythonhosted.org:443",
     "api.openai.com:443",
 ]
-"""What a job holding the review's key may reach: the bootstrap, uv, GitHub, OpenAI."""
+"""What a job holding the review's key may reach: zuke's release, uv, GitHub, OpenAI."""
 REVIEW_BASE = os.environ.get("ZUKE_REVIEW_BASE", "origin/main")
 """What the reviewers diff against; a commanded run reviews the pull request instead."""
 REVIEW_CRITERIA = (
@@ -191,7 +183,7 @@ async def vendor_spec(ctx: Context) -> None:
 
 
 async def vendor_spec_at(ctx: Context, repo: str, tag: str) -> None:
-    """Vendor the tool spec and wrapper versions of ``repo`` at ``tag``; relock."""
+    """Vendor the tool spec and wrapper versions of ``repo`` at ``tag``."""
     spec = await shown(ctx, repo, tag, TOOL_SPEC)
     packages = record(json.loads(spec), "spec").get("packages")
     versions: dict[str, str] = {}
@@ -211,7 +203,6 @@ async def vendor_spec_at(ctx: Context, repo: str, tag: str) -> None:
         json.dumps(engine, indent=2) + "\n", encoding="utf-8"
     )
     await ctx.log(f"vendored the tool spec at {tag}")
-    await lock(ctx)
 
 
 def pinned() -> dict[str, str]:
@@ -228,61 +219,6 @@ def generated() -> dict[str, str]:
     return generate(
         json.loads((SPEC / "tools.json").read_text(encoding="utf-8")), pinned()
     )
-
-
-def locked() -> list[str]:
-    """What ``deno.lock`` must pin: the engine ``zuke.json`` names, every wrapper."""
-    config = record(json.loads(ZUKE_JSON.read_text(encoding="utf-8")), "zuke.json")
-    engine = string(config, "engine", "zuke.json")
-    wrappers = [f"jsr:@zuke/{name}@{version}" for name, version in pinned().items()]
-    return [f"jsr:@zuke/engine@{engine}", *wrappers]
-
-
-async def lock(ctx: Context) -> None:
-    """Rewrite ``deno.lock`` from scratch over the engine and every wrapper.
-
-    The engine imports each wrapper dynamically, so no module names them all:
-    a throwaway entry module imports each release, and caching it records the
-    whole graph, integrity hashes included. ``--no-config`` keeps a Deno config
-    above the temporary directory from remapping what gets locked.
-    """
-    seed = Path(tempfile.mkdtemp(prefix="zuke-lock-"))
-    try:
-        entry = seed / "seed.ts"
-        entry.write_text(
-            "".join(f'import "{spec}";\n' for spec in locked()), encoding="utf-8"
-        )
-        LOCK.unlink(missing_ok=True)
-        await DenoTasks.cache(
-            ctx, lambda s: s.paths(str(entry)).args("--no-config", f"--lock={LOCK}")
-        )
-    finally:
-        shutil.rmtree(seed)
-    await ctx.log(f"locked {len(locked())} release(s) in {LOCK.name}")
-
-
-async def lock_check(ctx: Context) -> None:
-    """Fail when ``deno.lock`` is missing, misses a release, or the run changed it."""
-    if not LOCK.exists():
-        raise ValueError(
-            f"{LOCK.name} is missing, so nothing ran frozen; run ./zuke lock"
-        )
-    lockfile = record(json.loads(LOCK.read_text(encoding="utf-8")), LOCK.name)
-    specifiers = record(lockfile.get("specifiers"), f"{LOCK.name} specifiers")
-    missing = [spec for spec in locked() if spec not in specifiers]
-    if missing:
-        raise ValueError(
-            f"{LOCK.name} does not pin {', '.join(missing)}; run ./zuke lock"
-        )
-    status = await GitTasks.status(
-        ctx, lambda s: s.porcelain().paths(str(LOCK)).quiet()
-    )
-    if status.stdout.strip():
-        raise ValueError(
-            f"{LOCK.name} differs from the commit, so this run did not prove the "
-            "committed lock; commit a deliberate ./zuke lock, or restore it"
-        )
-    await ctx.log(f"{LOCK.name} pins the engine and every wrapper, unchanged")
 
 
 async def write_facades(ctx: Context, into: Path) -> None:
@@ -574,26 +510,18 @@ def vendored_engine() -> str | None:
     return tag.removeprefix("engine-v") if tag.startswith("engine-v") else None
 
 
-def pin_engine(config: str, engine: str) -> str:
-    """``zuke.json``'s text with its ``engine`` pin moved to ``engine``, as written."""
-    pinned, count = re.subn(
-        r'("engine"\s*:\s*)"[^"]*"', lambda m: f'{m[1]}"{engine}"', config
-    )
-    if count != 1:
-        raise ValueError(f"{ZUKE_JSON.name} must pin exactly one engine")
-    return pinned
-
-
 async def sync_engine(ctx: Context) -> None:
     """Vendor the engine's newest CLI release, and propose it as one pull request.
 
     The ``zuke`` binary carries the engine and every wrapper release of the
     commit its CLI release is tagged at, so that commit is what this SDK
     follows: its tool spec and wrapper versions, its conformance cases, and
-    its engine as the pin. Following an older tag would leave a fix out;
-    following a newer commit would ask the binary for releases it lacks. With
-    nothing new, nothing happens. Otherwise the facades and ``deno.lock`` are
-    regenerated and, with the ``zuke-build`` App's credentials, the change is
+    its engine as the pin, and its binary as the one the launchers run.
+    Following an older tag would leave a fix out; following a newer commit
+    would ask the binary for releases it lacks. With nothing new, nothing
+    happens. Otherwise the facades are regenerated, ``zuke upgrade --engine``
+    moves the launchers and the pin to that release and, with the
+    ``zuke-build`` App's credentials, the change is
     pushed to one standing branch whose pull request is opened, or updated,
     with an issue for it to close. The gate on that pull request decides: a
     red protocol replay or facades check is the SDK work the release needs.
@@ -634,11 +562,15 @@ async def sync_engine(ctx: Context) -> None:
             )
             return
         await vendor_cases_at(ctx, checkout, tag)
-        ZUKE_JSON.write_text(
-            pin_engine(ZUKE_JSON.read_text(encoding="utf-8"), release),
-            encoding="utf-8",
-        )
         await vendor_spec_at(ctx, checkout, tag)
+    # The launchers run that very release, so they and the engine pin in
+    # zuke.json move together, through the zuke command that writes them.
+    await ctx.sh(
+        str(Path(__file__).parent / "zuke"),
+        "upgrade",
+        "--engine",
+        tag.removeprefix("cli-v"),
+    )
     await facades(ctx)
     await propose_sync(ctx, tag)
 
@@ -740,8 +672,9 @@ def sync_pr_body(tag: str, issue_url: str) -> str:
         f"Automated sync with `{ENGINE_REPO}` at `{tag}`, the commit the "
         "`zuke` binary of that release is compiled from: the tool spec and "
         "the wrapper versions under `spec/`, the conformance cases under "
-        "`tests/protocol/cases/` and the engine pin in `zuke.json`, with the "
-        "facades and `deno.lock` regenerated. A red gate means the SDK needs "
+        "`tests/protocol/cases/`, and the launchers and the engine pin in "
+        "`zuke.json` moved to that release, with the facades regenerated. A "
+        "red gate means the SDK needs "
         "work for this release: a failing protocol replay names a protocol "
         "change, a failing facades check a spec shape the generator does not "
         "handle yet. Later releases update this pull request in place.\n\n"
@@ -827,22 +760,10 @@ class Zuke(Build):
         .description("Check zuke.tools matches the vendored tool spec")
         .executes(facades_check)
     )
-    lock = (
-        target()
-        .description("Rewrite deno.lock over the engine and every wrapper release")
-        .executes(lock)
-    )
-    lock_check = (
-        target()
-        .description("Check deno.lock pins every release and the run left it as is")
-        # Soft-ordered last: it reports what the whole run did to the lock.
-        .after(fmt_check, lint, check, test, facades_check)
-        .executes(lock_check)
-    )
     ci = (
         target()
-        .description("The gate: formatting, lint, types, tests, the facades, the lock")
-        .depends_on(fmt_check, lint, check, test, facades_check, lock_check)
+        .description("The gate: formatting, lint, types, tests, the facades")
+        .depends_on(fmt_check, lint, check, test, facades_check)
     )
     review_base = (
         target()
@@ -884,8 +805,7 @@ class Zuke(Build):
     vendor_spec = (
         target()
         .description(
-            "Vendor the engine's tool spec and the wrappers' versions at a tag, "
-            "and relock"
+            "Vendor the engine's tool spec and the wrappers' versions at a tag"
         )
         .requires(engine_repo, engine_tag)
         .executes(vendor_spec)

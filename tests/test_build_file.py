@@ -28,8 +28,6 @@ def test_the_gate_depends_on_every_check() -> None:
         "test",
         "facades",
         "facades_check",
-        "lock",
-        "lock_check",
         "ci",
         "review_base",
         "review",
@@ -42,14 +40,6 @@ def test_the_gate_depends_on_every_check() -> None:
         "sync_engine",
     ]
     assert Zuke.ci.manifest()["dependsOn"] == [
-        "fmt_check",
-        "lint",
-        "check",
-        "test",
-        "facades_check",
-        "lock_check",
-    ]
-    assert Zuke.lock_check.manifest()["after"] == [
         "fmt_check",
         "lint",
         "check",
@@ -137,8 +127,6 @@ async def test_vendor_spec_then_facades_then_the_check(
 ) -> None:
     monkeypatch.setattr(build, "SPEC", tmp_path / "spec")
     monkeypatch.setattr(build, "TOOLS", tmp_path / "tools")
-    monkeypatch.setattr(build, "LOCK", tmp_path / "deno.lock")
-    (tmp_path / "deno.lock").write_text("stale")
     fixtures = Path(__file__).parent / "fixtures"
     spec = (fixtures / "spec.json").read_text()
     at = "engine-v9.9.9:packages"
@@ -205,15 +193,9 @@ async def test_vendor_spec_then_facades_then_the_check(
             '{\n  "tag": "engine-v9.9.9",\n  "engine": "1.4.0",\n  "versions": {\n'
             '    "widget": "0.1.0",\n    "tally": "0.2.0"\n  }\n}\n'
         )
-        # The new versions are relocked: the old lock is gone, and the cache
-        # runs over the engine and both wrappers.
-        assert not (tmp_path / "deno.lock").exists()
-        (call,) = cached
-        assert is_record(call) and (call["package"], call["task"]) == ("deno", "cache")
-        paths, args = configure_calls(call)
-        assert args == ["args", ["--no-config", f"--lock={tmp_path / 'deno.lock'}"]]
-        assert is_list(paths) and paths[0] == "paths"
-        assert "locked 3 release(s) in deno.lock" in logged[-1]
+        # Nothing is locked: the zuke binary carries the exact releases.
+        assert cached == []
+        assert "vendored the tool spec at engine-v9.9.9" in logged[-1]
         assert await run("facades") is None
         written = sorted(p.name for p in (tmp_path / "tools").iterdir())
         assert written == ["__init__.py", "_tooling.py", "tally.py", "widget.py"]
@@ -473,58 +455,6 @@ async def test_the_review_posts_with_the_actions_token_without_the_app() -> None
         assert "commentToken" not in [call[0] for call in setters if is_list(call)]
 
 
-async def test_lock_check_names_what_is_wrong_with_the_lock(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    lock = tmp_path / "deno.lock"
-    monkeypatch.setattr(build, "LOCK", lock)
-    status: list[str] = ["?? deno.lock\n"]
-    calls: list[object] = []
-
-    async def tool_call(params: object) -> object:
-        calls.append(params)
-        return {"code": 0, "stdout": status[0], "stderr": ""}
-
-    def pinning(specifiers: list[str]) -> None:
-        lock.write_text(json.dumps({"specifiers": dict.fromkeys(specifiers, "1")}))
-
-    peer: Peer
-    async with served(Zuke()) as peer:
-        peer.on("tool.call", tool_call)
-        peer.on("log", lambda _: asyncio.sleep(0))
-        await peer.request("build.configure", {"parameters": {}})
-
-        async def check() -> object:
-            params = {"target": "lock_check", "runId": "r1", "dryRun": False}
-            return await asyncio.wait_for(peer.request("target.run", params), 10)
-
-        with pytest.raises(RpcError, match=r"deno\.lock is missing"):
-            await check()
-        everything = build.locked()
-        assert everything[0].startswith("jsr:@zuke/engine@")
-        assert "jsr:@zuke/git@" + build.pinned()["git"] in everything
-        pinning(everything[1:])
-        with pytest.raises(RpcError, match=r"does not pin jsr:@zuke/engine@"):
-            await check()
-        pinning(everything)
-        with pytest.raises(RpcError, match="differs from the commit"):
-            await check()
-        status[0] = ""
-        assert await check() is None
-    git = calls[-1]
-    assert is_record(git) and (git["package"], git["task"]) == ("git", "status")
-    assert configure_calls(git) == [
-        ["porcelain", []],
-        ["paths", [str(lock)]],
-        ["quiet", []],
-    ]
-
-
-def test_the_committed_lock_pins_every_release() -> None:
-    lockfile = json.loads(build.LOCK.read_text())
-    assert set(build.locked()) <= set(lockfile["specifiers"])
-
-
 async def run_target(
     name: str, handlers: dict[str, Handler], parameters: dict[str, object] | None = None
 ) -> None:
@@ -714,13 +644,6 @@ def test_newest_release_picks_the_highest_exact_tag_with_the_prefix() -> None:
     assert build.newest_release("", "cli-v") is None
 
 
-def test_pin_engine_moves_the_pin_and_keeps_the_file_as_written() -> None:
-    config = '{\n  "sdk": { "command": ["uv"] },\n  "engine": "1.2.0"\n}\n'
-    assert build.pin_engine(config, "1.3.0") == config.replace("1.2.0", "1.3.0")
-    with pytest.raises(ValueError, match="exactly one engine"):
-        build.pin_engine('{ "name": "x" }', "1.3.0")
-
-
 def sync_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Point everything the sync writes into ``tmp_path``, vendored at cli-v2.0.0."""
     tmp_path.mkdir(exist_ok=True)
@@ -728,15 +651,12 @@ def sync_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         "SPEC": tmp_path / "spec",
         "CASES": tmp_path / "cases",
         "TOOLS": tmp_path / "tools",
-        "LOCK": tmp_path / "deno.lock",
-        "ZUKE_JSON": tmp_path / "zuke.json",
     }.items():
         monkeypatch.setattr(build, name, path)
     (tmp_path / "spec").mkdir()
     (tmp_path / "spec" / "engine.json").write_text('{"tag": "cli-v2.0.0"}')
     (tmp_path / "cases").mkdir()
     (tmp_path / "cases" / "VERSION").write_text("cli-v2.0.0\n")
-    (tmp_path / "zuke.json").write_text('{ "engine": "1.0.0" }\n')
 
 
 REFS = "a1\trefs/tags/cli-v2.0.0\na2\trefs/tags/cli-v2.1.0\n"
@@ -776,12 +696,12 @@ async def sync_run(
     status: str,
     open_pr: str = "",
     credentials: bool = True,
-) -> tuple[list[dict[str, object]], list[object]]:
+) -> tuple[list[dict[str, object]], list[object], list[list[str]]]:
     """Run ``sync_engine`` to a release newer than the vendored one.
 
     Answers what the sync asks: the tags, the checkout's files at the tag, the
     work tree's status, the App token and the open pull requests. Returns the
-    ``tool.call`` params in order, and the log lines.
+    ``tool.call`` params in order, the log lines, and the commands it ran.
     """
     sync_paths(tmp_path, monkeypatch)
     spec = (Path(__file__).parent / "fixtures" / "spec.json").read_text()
@@ -794,9 +714,11 @@ async def sync_run(
     }
     calls: list[dict[str, object]] = []
     logged: list[object] = []
+    execs: list[list[str]] = []
 
     async def exec_(params: object) -> object:
         argv = field_strings(params, "argv", "exec")
+        execs.append(argv)
         if argv[3:4] == ["ls-tree"]:
             return {"code": 0, "stdout": "case.json\n", "stderr": ""}
         if argv[3:4] == ["show"]:
@@ -842,7 +764,7 @@ async def sync_run(
         },
         {"app_id": "42", "app_key": "PEM"} if credentials else {},
     )
-    return calls, logged
+    return calls, logged, execs
 
 
 def gh_commands(calls: list[dict[str, object]]) -> list[list[object]]:
@@ -857,20 +779,22 @@ def gh_commands(calls: list[dict[str, object]]) -> list[list[object]]:
 async def test_sync_engine_vendors_the_release_and_opens_an_issue_and_its_pr(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    calls, _ = await sync_run(
+    calls, _, execs = await sync_run(
         tmp_path, monkeypatch, status=" M spec/engine.json\n?? src/zuke/tools/x.py\n"
     )
     # The checkout is the release tag, shallow.
     clone = next(c for c in calls if c["task"] == "clone")
     setters = configure_calls(clone)
     assert ["branch", ["cli-v2.1.0"]] in setters and ["depth", [1]] in setters
-    # Everything is vendored at that tag, and the engine pinned to its release.
+    # Everything is vendored at that tag, and the launchers and the engine pin
+    # moved to that release by the zuke command that writes them.
     assert (tmp_path / "cases" / "VERSION").read_text() == "cli-v2.1.0\n"
     assert (tmp_path / "cases" / "case.json").read_text() == '{"case": 1}'
     assert json.loads((tmp_path / "spec" / "engine.json").read_text())["tag"] == (
         "cli-v2.1.0"
     )
-    assert (tmp_path / "zuke.json").read_text() == '{ "engine": "1.4.0" }\n'
+    launcher = str(Path(build.__file__).parent / "zuke")
+    assert [launcher, "upgrade", "--engine", "2.1.0"] in execs
     assert (tmp_path / "tools" / "widget.py").is_file()
     # The branch is created, never forced over local changes.
     checkout = next(c for c in calls if c["task"] == "checkout")
@@ -892,8 +816,8 @@ async def test_sync_engine_vendors_the_release_and_opens_an_issue_and_its_pr(
 async def test_sync_engine_updates_the_open_pr_in_place(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    calls, logged = await sync_run(
-        tmp_path, monkeypatch, status=" M deno.lock\n", open_pr="7\n"
+    calls, logged, _ = await sync_run(
+        tmp_path, monkeypatch, status=" M zuke.json\n", open_pr="7\n"
     )
     listed, edited = gh_commands(calls)
     assert listed[0] == ["command", ["pr", "list"]]
@@ -952,13 +876,13 @@ def test_vendored_engine_reads_the_record_or_an_engine_tag(
 async def test_sync_engine_proposes_nothing_without_changes_or_credentials(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    calls, logged = await sync_run(tmp_path, monkeypatch, status="")
+    calls, logged, _ = await sync_run(tmp_path, monkeypatch, status="")
     assert gh_commands(calls) == []
     assert "cli-v2.1.0 changes nothing vendored here" in str(logged)
-    calls, logged = await sync_run(
+    calls, logged, _ = await sync_run(
         tmp_path / "again",
         monkeypatch,
-        status=" M deno.lock\n",
+        status=" M zuke.json\n",
         credentials=False,
     )
     assert gh_commands(calls) == []
