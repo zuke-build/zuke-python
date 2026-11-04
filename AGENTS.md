@@ -176,6 +176,7 @@ Name every test module `test_*.py`; pytest discovers nothing else.
 | Regenerate `uv.lock`        | `uv lock`                                                  |
 | Regenerate `deno.lock`      | `./zuke lock` (`vendor_spec` relocks; `lock_check` is in the gate) |
 | Publish a cut release       | `./zuke publish` (the `release` workflow runs it on `main`) |
+| Sync with the engine        | `./zuke sync_engine` (the daily `sync` workflow runs it; the pull request needs the App credentials) |
 | Generate the API reference  | `./zuke api_reference` (writes `.zuke/api.json`)          |
 | Sync it to the website      | `./zuke sync_website` (the `release` workflow runs it after `publish`; skipped without the App credentials or `WEBSITE_SYNC_TOKEN`) |
 
@@ -193,8 +194,22 @@ does not name, then run `./zuke lock`. `lock_check` fails the gate when the lock
 is absent, misses a release, or differs from the commit. `.github/workflows/ci.yml` is
 generated from `build.py`'s `ci_workflow` field: edit the field, run
 `./zuke generate-ci`, and commit both; `.github/workflows/ai-review.yml` is
-generated the same way from its `ai_review` field, and
-`.github/workflows/release.yml` from its `release_workflow` field.
+generated the same way from its `ai_review` field,
+`.github/workflows/release.yml` from its `release_workflow` field, and
+`.github/workflows/sync.yml` from its `sync_workflow` field.
+
+**Following the engine.** `sync_engine` runs daily and on demand. It finds the
+engine repository's newest `cli-v*` tag, the commit the `zuke` binary of that
+release is compiled from, and does nothing when `spec/engine.json` and the
+cases' `VERSION` already name it. Otherwise it vendors that tag's cases, tool
+spec and wrapper versions, pins `zuke.json` to the engine release of that
+commit, relocks and regenerates the facades, and, with the `zuke-build` App's
+credentials, force-pushes the result to the one `sync/engine` branch: it
+opens an issue and a pull request closing it, or retitles the open one. The
+title is `feat:` when the facades changed and `fix:` otherwise. That tag, not
+a newer engine tag, because the binary embeds exactly its releases: a facade
+must never ask the binary for a wrapper release it lacks. A red gate on the
+sync pull request is the SDK work the release needs.
 
 ## Repository layout
 
@@ -212,6 +227,7 @@ tests/                    # pytest suite; protocol/ replays the engine's conform
 .github/workflows/ci.yml  # the gate on ubuntu, macOS and Windows, generated from build.py
 .github/workflows/ai-review.yml  # the AI review on pull requests and on command, generated from build.py
 .github/workflows/release.yml    # release-please and the PyPI publish on main, generated from build.py
+.github/workflows/sync.yml       # the daily engine sync's pull request, generated from build.py
 .release-please-config.json, .release-please-manifest.json  # the release configuration and the last released version
 .github/ISSUE_TEMPLATE/   # feature, bug and chore templates; blank issues are off
 AGENTS.md                 # this file; CLAUDE.md points here

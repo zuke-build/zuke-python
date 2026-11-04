@@ -13,6 +13,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import shutil
 import tempfile
 from pathlib import Path
@@ -69,6 +70,14 @@ LOCK = Path(__file__).parent / "deno.lock"
 """The lock the launchers run the engine, and every wrapper it imports, frozen to."""
 ZUKE_JSON = Path(__file__).parent / "zuke.json"
 """Where the launchers read the engine version they run."""
+ENGINE_REPO = "zuke-build/zuke"
+"""The engine repository this SDK follows."""
+SDK_REPO = "zuke-build/zuke-python"
+"""This repository, where the engine sync opens its pull request."""
+SYNC_BRANCH = "sync/engine"
+"""The one branch the engine sync pushes, so its pull request is updated in place."""
+SYNC_ISSUE = "chore: keep zuke-python in sync with the engine"
+"""The title of the issue an engine sync pull request closes."""
 DIST = Path(__file__).parent / "dist"
 """Where uv build writes the sdist and the wheel, and their attestations go."""
 ATTESTATIONS = "pypi-attestations==0.0.31"
@@ -154,7 +163,11 @@ def required(p: StringParameter) -> str:
 
 async def vendor(ctx: Context) -> None:
     """Replace the vendored cases with the engine repository's at the given tag."""
-    repo, tag = required(Zuke.engine_repo), required(Zuke.engine_tag)
+    await vendor_cases_at(ctx, required(Zuke.engine_repo), required(Zuke.engine_tag))
+
+
+async def vendor_cases_at(ctx: Context, repo: str, tag: str) -> None:
+    """Replace the vendored cases with those of the checkout ``repo`` at ``tag``."""
     tree = f"{tag}:{CONFORMANCE}"
     listing = await ctx.sh("git", "-C", repo, "ls-tree", "--name-only", tree)
     for stale in CASES.glob("*.json"):
@@ -174,7 +187,11 @@ async def shown(ctx: Context, repo: str, ref: str, path: str) -> str:
 
 async def vendor_spec(ctx: Context) -> None:
     """Replace the vendored tool spec, and the wrappers' versions, with the tag's."""
-    repo, tag = required(Zuke.engine_repo), required(Zuke.engine_tag)
+    await vendor_spec_at(ctx, required(Zuke.engine_repo), required(Zuke.engine_tag))
+
+
+async def vendor_spec_at(ctx: Context, repo: str, tag: str) -> None:
+    """Vendor the tool spec and wrapper versions of ``repo`` at ``tag``; relock."""
     spec = await shown(ctx, repo, tag, TOOL_SPEC)
     packages = record(json.loads(spec), "spec").get("packages")
     versions: dict[str, str] = {}
@@ -182,9 +199,14 @@ async def vendor_spec(ctx: Context) -> None:
         name = string(entry, "name", "package")
         deno = json.loads(await shown(ctx, repo, tag, f"packages/{name}/deno.json"))
         versions[name] = string(deno, "version", name)
+    release = json.loads(await shown(ctx, repo, tag, "packages/engine/deno.json"))
     SPEC.mkdir(exist_ok=True)
     (SPEC / "tools.json").write_text(spec, encoding="utf-8")
-    engine = {"tag": tag, "versions": versions}
+    engine = {
+        "tag": tag,
+        "engine": string(release, "version", "engine"),
+        "versions": versions,
+    }
     (SPEC / "engine.json").write_text(
         json.dumps(engine, indent=2) + "\n", encoding="utf-8"
     )
@@ -402,6 +424,26 @@ async def api_reference(ctx: Context) -> None:
     await ctx.log(f"wrote the API reference of zuke@{__version__} to {REFERENCE}")
 
 
+async def push_branch(ctx: Context, token: str, clone: str, branch: str) -> None:
+    """Force-push ``branch`` of the checkout ``clone`` to its origin with ``token``.
+
+    The token rides as a one-off header rather than in the remote URL, so git
+    never writes it to ``.git/config``. The caller registered the token as a
+    secret when it got it; the header spelling is registered here.
+    """
+    basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+    auth = f"AUTHORIZATION: basic {basic}"
+    await ctx.secret(auth)
+    await GitTasks.run(
+        ctx,
+        lambda s: (
+            s.dir(clone)
+            .config("http.extraheader", auth)
+            .command("push", "--force", "origin", branch)
+        ),
+    )
+
+
 async def sync_website(ctx: Context) -> None:
     """Open a website pull request with the refreshed reference, and queue its merge.
 
@@ -420,12 +462,7 @@ async def sync_website(ctx: Context) -> None:
     if not token:
         await ctx.log("no App credentials or WEBSITE_SYNC_TOKEN: skipping the sync")
         return
-    # The token rides as a one-off header rather than in the remote URL, so
-    # git never writes it to .git/config; both spellings are redacted.
-    basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
-    auth = f"AUTHORIZATION: basic {basic}"
     await ctx.secret(token)
-    await ctx.secret(auth)
     branch = f"zuke-python-sync/{__version__}"
     message = f"chore: sync the python api reference for zuke@{__version__}"
     gh_env = {"GH_TOKEN": token}
@@ -454,14 +491,7 @@ async def sync_website(ctx: Context) -> None:
                 .message(message)
             ),
         )
-        await GitTasks.run(
-            ctx,
-            lambda s: (
-                s.dir(into)
-                .config("http.extraheader", auth)
-                .command("push", "--force", "origin", branch)
-            ),
-        )
+        await push_branch(ctx, token, into, branch)
         # gh refuses a second PR for the same head; the push updated that one.
         opened = await GhTasks.run(
             ctx,
@@ -494,6 +524,229 @@ async def sync_website(ctx: Context) -> None:
                 .env(gh_env)
             ),
         )
+
+
+def newest_release(refs: str, prefix: str) -> str | None:
+    """The newest ``<prefix><major>.<minor>.<patch>`` tag in ``git ls-remote`` output.
+
+    A peeled ``^{}`` entry, a prerelease and any other tag are passed over.
+    """
+    best: tuple[tuple[int, int, int], str] | None = None
+    for line in refs.splitlines():
+        tag = line.rsplit("\t", 1)[-1].removeprefix("refs/tags/")
+        match = re.fullmatch(rf"{re.escape(prefix)}(\d+)\.(\d+)\.(\d+)", tag)
+        if match is None:
+            continue
+        version = (int(match[1]), int(match[2]), int(match[3]))
+        if best is None or version > best[0]:
+            best = (version, tag)
+    return None if best is None else best[1]
+
+
+def vendored_at() -> tuple[str, str]:
+    """The tags the tool spec and the conformance cases were vendored at."""
+    engine = record(
+        json.loads((SPEC / "engine.json").read_text(encoding="utf-8")), "engine.json"
+    )
+    cases = (CASES / "VERSION").read_text(encoding="utf-8").strip()
+    return string(engine, "tag", "engine.json"), cases
+
+
+def release_numbers(version: str) -> tuple[int, int, int] | None:
+    """An exact ``major.minor.patch`` release's numbers, or ``None``."""
+    match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", version)
+    return None if match is None else (int(match[1]), int(match[2]), int(match[3]))
+
+
+def vendored_engine() -> str | None:
+    """The engine release the vendored spec came from, as ``engine.json`` records it.
+
+    A spec vendored before the release was recorded is known by an
+    ``engine-v<version>`` tag; at any other tag, it is unknown.
+    """
+    engine = record(
+        json.loads((SPEC / "engine.json").read_text(encoding="utf-8")), "engine.json"
+    )
+    recorded = engine.get("engine")
+    if isinstance(recorded, str):
+        return recorded
+    tag = string(engine, "tag", "engine.json")
+    return tag.removeprefix("engine-v") if tag.startswith("engine-v") else None
+
+
+def pin_engine(config: str, engine: str) -> str:
+    """``zuke.json``'s text with its ``engine`` pin moved to ``engine``, as written."""
+    pinned, count = re.subn(
+        r'("engine"\s*:\s*)"[^"]*"', lambda m: f'{m[1]}"{engine}"', config
+    )
+    if count != 1:
+        raise ValueError(f"{ZUKE_JSON.name} must pin exactly one engine")
+    return pinned
+
+
+async def sync_engine(ctx: Context) -> None:
+    """Vendor the engine's newest CLI release, and propose it as one pull request.
+
+    The ``zuke`` binary carries the engine and every wrapper release of the
+    commit its CLI release is tagged at, so that commit is what this SDK
+    follows: its tool spec and wrapper versions, its conformance cases, and
+    its engine as the pin. Following an older tag would leave a fix out;
+    following a newer commit would ask the binary for releases it lacks. With
+    nothing new, nothing happens. Otherwise the facades and ``deno.lock`` are
+    regenerated and, with the ``zuke-build`` App's credentials, the change is
+    pushed to one standing branch whose pull request is opened, or updated,
+    with an issue for it to close. The gate on that pull request decides: a
+    red protocol replay or facades check is the SDK work the release needs.
+    A CLI release carrying an older engine than the vendored spec came from
+    is passed over: following it would take the facades backwards.
+    """
+    url = f"https://github.com/{ENGINE_REPO}.git"
+    refs = await GitTasks.ls_remote(
+        ctx, lambda s: s.remote(url).tags().patterns("cli-v*").quiet()
+    )
+    tag = newest_release(refs.stdout, "cli-v")
+    if tag is None:
+        raise ValueError(f"{ENGINE_REPO} has no cli-v release tag")
+    if vendored_at() == (tag, tag):
+        await ctx.log(f"already in sync with {tag}")
+        return
+    with tempfile.TemporaryDirectory(prefix="zuke-engine-") as checkout:
+        await GitTasks.clone(
+            ctx,
+            lambda s: s.repository(url).directory(checkout).branch(tag).depth(1),
+        )
+        release = string(
+            json.loads(await shown(ctx, checkout, tag, "packages/engine/deno.json")),
+            "version",
+            "engine",
+        )
+        # Never backwards: a spec vendored at a newer engine tag than the
+        # newest CLI release carries waits for a CLI release that catches up,
+        # or the facades would lose what the newer spec gave them.
+        have, carried = (
+            release_numbers(vendored_engine() or ""),
+            release_numbers(release),
+        )
+        if have is not None and carried is not None and carried < have:
+            await ctx.log(
+                f"{tag} carries @zuke/engine {release}, older than the vendored "
+                f"{vendored_engine()}: waiting for a newer CLI release"
+            )
+            return
+        await vendor_cases_at(ctx, checkout, tag)
+        ZUKE_JSON.write_text(
+            pin_engine(ZUKE_JSON.read_text(encoding="utf-8"), release),
+            encoding="utf-8",
+        )
+        await vendor_spec_at(ctx, checkout, tag)
+    await facades(ctx)
+    await propose_sync(ctx, tag)
+
+
+async def propose_sync(ctx: Context, tag: str) -> None:
+    """Commit what the sync vendored to ``SYNC_BRANCH`` and open or update its PR."""
+    root = str(Path(__file__).parent)
+    status = await GitTasks.status(ctx, lambda s: s.dir(root).porcelain().quiet())
+    changed = [line[3:] for line in status.stdout.splitlines() if line.strip()]
+    if not changed:
+        await ctx.log(f"{tag} changes nothing vendored here")
+        return
+    token = await app_token(ctx, "zuke-python", "contents", "pull_requests", "issues")
+    if token is None:
+        await ctx.log(f"vendored {tag}; no App credentials, so no pull request")
+        return
+    await ctx.secret(token)
+    # New or changed facades are new API for the SDK's users: a minor release.
+    kind = "feat" if any(p.startswith("src/zuke/tools/") for p in changed) else "fix"
+    title = f"{kind}: sync with the engine at {tag}"
+    gh_env = {"GH_TOKEN": token}
+    await GitTasks.checkout(ctx, lambda s: s.dir(root).ref(SYNC_BRANCH).create())
+    await GitTasks.add(ctx, lambda s: s.dir(root).all())
+    await GitTasks.commit(
+        ctx,
+        lambda s: (
+            s.dir(root)
+            .config("user.name", BOT[0])
+            .config("user.email", BOT[1])
+            .message(title)
+        ),
+    )
+    await push_branch(ctx, token, root, SYNC_BRANCH)
+    open_prs = await GhTasks.run(
+        ctx,
+        lambda s: (
+            s.command("pr", "list")
+            .repo(SDK_REPO)
+            .flag("head", SYNC_BRANCH)
+            .flag("state", "open")
+            .flag("json", "number")
+            .flag("jq", ".[].number")
+            .env(gh_env)
+        ),
+    )
+    number = open_prs.stdout.strip()
+    if number:
+        await GhTasks.run(
+            ctx,
+            lambda s: (
+                s.command("pr", "edit", number)
+                .repo(SDK_REPO)
+                .flag("title", title)
+                .env(gh_env)
+            ),
+        )
+        await ctx.log(f"updated pull request #{number} to {tag}")
+        return
+    issue = await GhTasks.run(
+        ctx,
+        lambda s: (
+            s.command("issue", "create")
+            .repo(SDK_REPO)
+            .flag("title", SYNC_ISSUE)
+            .flag("body", sync_issue_body(tag))
+            .env(gh_env)
+        ),
+    )
+    issue_url = issue.stdout.strip()
+    opened = await GhTasks.run(
+        ctx,
+        lambda s: (
+            s.command("pr", "create")
+            .repo(SDK_REPO)
+            .flag("head", SYNC_BRANCH)
+            .flag("base", "main")
+            .flag("title", title)
+            .flag("body", sync_pr_body(tag, issue_url))
+            .env(gh_env)
+        ),
+    )
+    await ctx.log(f"opened {opened.stdout.strip()} for {tag}")
+
+
+def sync_issue_body(tag: str) -> str:
+    """The issue an engine sync's pull request closes."""
+    return (
+        f"The engine repository released `{tag}`, which this SDK does not "
+        "follow yet: its tool spec and wrapper versions, its conformance cases "
+        "and its engine release. The engine sync vendored them on the "
+        f"`{SYNC_BRANCH}` branch; its pull request closes this issue once it "
+        "is merged. A red gate there names the SDK work the release needs."
+    )
+
+
+def sync_pr_body(tag: str, issue_url: str) -> str:
+    """The body of an engine sync's pull request, closing ``issue_url``."""
+    return (
+        f"Automated sync with `{ENGINE_REPO}` at `{tag}`, the commit the "
+        "`zuke` binary of that release is compiled from: the tool spec and "
+        "the wrapper versions under `spec/`, the conformance cases under "
+        "`tests/protocol/cases/` and the engine pin in `zuke.json`, with the "
+        "facades and `deno.lock` regenerated. A red gate means the SDK needs "
+        "work for this release: a failing protocol replay names a protocol "
+        "change, a failing facades check a spec shape the generator does not "
+        "handle yet. Later releases update this pull request in place.\n\n"
+        f"Closes {issue_url}"
+    )
 
 
 async def fetch_review_base(ctx: Context) -> None:
@@ -636,6 +889,13 @@ class Zuke(Build):
         )
         .requires(engine_repo, engine_tag)
         .executes(vendor_spec)
+    )
+    sync_engine = (
+        target()
+        .description(
+            "Vendor the engine's newest CLI release and propose it as a pull request"
+        )
+        .executes(sync_engine)
     )
 
     ai_review = (
@@ -814,6 +1074,41 @@ class Zuke(Build):
                         "name": "Check the generated workflow is current",
                         "if": "runner.os != 'Windows'",
                         "run": "./zuke generate-ci --check",
+                    },
+                ],
+            )
+        )
+        .pins(PINS)
+    )
+
+    sync_workflow = (
+        cicd()
+        .path(".github/workflows/sync.yml")
+        .pipeline(
+            {
+                "name": "Engine sync",
+                # Daily, off the hour, and on demand. The App token the target
+                # mints does the writes, so the job's own token only reads.
+                "triggers": {"schedule": [{"cron": "17 5 * * *"}], "manual": True},
+                "concurrency": {"group": "engine-sync", "cancelInProgress": False},
+                "harden": {"egress": "audit"},
+            }
+        )
+        .invokes(
+            invoke(
+                sync_engine,
+                name="Sync with the engine's newest release",
+                timeoutMinutes=15,
+                permissions={"contents": "read"},
+                steps=[
+                    *UV_STEPS,
+                    {
+                        "name": "Sync with Zuke",
+                        "run": "./zuke sync_engine",
+                        "env": {
+                            "ZUKE_BUILD_APP_ID": "${{ secrets.ZUKE_BUILD_APP_ID }}",
+                            "ZUKE_BUILD_APP_KEY": "${{ secrets.ZUKE_BUILD_APP_KEY }}",
+                        },
                     },
                 ],
             )

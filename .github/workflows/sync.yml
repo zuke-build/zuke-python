@@ -1,0 +1,34 @@
+name: Engine sync
+"on":
+  workflow_dispatch: {}
+  schedule:
+    - cron: "17 5 * * *"
+permissions:
+  contents: read
+concurrency:
+  group: engine-sync
+  cancel-in-progress: false
+jobs:
+  sync_engine:
+    name: "Sync with the engine's newest release"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 15
+    steps:
+      - name: Harden and check out with Zuke
+        uses: zuke-build/zuke@b0832247daa16321be405a10b71c022317d2c5a4 # v1.0.8
+        with:
+          egress-policy: audit
+          persist-credentials: "false"
+      - name: Install uv
+        shell: bash
+        run: pipx install uv
+      - name: Sync the locked environment
+        shell: bash
+        run: uv sync --locked
+      - name: Sync with Zuke
+        run: ./zuke sync_engine
+        env:
+          ZUKE_BUILD_APP_ID: "${{ secrets.ZUKE_BUILD_APP_ID }}"
+          ZUKE_BUILD_APP_KEY: "${{ secrets.ZUKE_BUILD_APP_KEY }}"
