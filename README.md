@@ -43,10 +43,14 @@ describes your build to the engine and runs your target bodies when asked.
 main repository's [install guide](https://github.com/zuke-build/zuke/blob/master/docs/install.md).
 
 ```sh
-deno install -A -g -n zuke jsr:@zuke/cli   # any OS, with Deno
 brew install zuke-build/tap/zuke           # macOS, Linux
 choco install zuke                         # Windows
+deno install -A -g -n zuke jsr:@zuke/cli   # any OS, with Deno
 ```
+
+The Homebrew and Chocolatey `zuke` is a standalone binary that carries the
+engine and every tool wrapper inside it, so a Python build needs **no Deno at
+all**: only Python and uv.
 
 **2. Scaffold a Python project and run it**:
 
@@ -122,11 +126,13 @@ build to an agent as typed tools.
 | This package, into an existing project | `uv add --dev zuke`, or `pip install zuke`                                                |
 | A new project                          | `zuke setup --sdk python`, which writes `build.py`, `zuke.json` and the launchers         |
 
-Python 3.12 or newer. The engine runs on Deno: the `zuke` CLI finds or
-installs it, and so do the committed `./zuke` and `zuke.ps1` launchers, which
-download a pinned, checksum-verified Deno on first use. `zuke.json` pins the
-exact `@zuke/engine` release a project runs on; `zuke upgrade --engine` moves
-it.
+Python 3.12 or newer. The standalone `zuke` binary runs the build on the
+engine compiled into it, with no Deno installed, whenever that engine serves
+the `@zuke/engine` release `zuke.json` pins (the same major version, at the pin
+or newer); `zuke --version` names it. The committed `./zuke` and `zuke.ps1`
+launchers, and a `deno install`ed `zuke`, run the pinned release on Deno
+instead, which the launchers download, pinned and checksum-verified, on first
+use. `zuke upgrade --engine` moves the pin.
 
 On a machine without the CLI, such as a CI runner, the launchers run the build
 the same way: `./zuke ci`, or `./zuke.ps1 ci` on Windows. The generated
@@ -135,7 +141,7 @@ workflows call them.
 ## How it works
 
 ```
-zuke <target>  ─▶  @zuke/engine (the pinned release, on Deno)
+zuke <target>  ─▶  @zuke/engine (built into the binary, or the pin on Deno)
                       │  starts the worker zuke.json names: uv run build.py
                       ▼
                    build.py  ◀── JSON-RPC 2.0 over loopback ──▶  engine
@@ -235,7 +241,12 @@ when they drift. The engine, every wrapper it imports, and their `@zuke/core`
 run frozen against `deno.lock`; `zuke lock` rewrites it. The same AI reviewers
 the main repository runs review this repository's pull requests, from
 `build.py`'s `review` target through `zuke.tools.ai`: the SDK's build is
-reviewed by the SDK.
+reviewed by the SDK. An engine sync, `build.py`'s `sync_engine`, runs whenever
+the engine repository publishes a CLI release, which is what the binary
+carries: it vendors
+that commit's tool spec, wrapper versions and conformance cases, pins its
+engine, regenerates the facades and the lock, and opens one standing pull
+request, with an issue, whose gate shows whether the SDK needs work for it.
 
 ## Contributing
 
