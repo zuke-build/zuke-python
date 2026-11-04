@@ -2,98 +2,63 @@
 # Copyright (c) 2026 the Zuke contributors
 # SPDX-License-Identifier: MIT
 #
-# Zuke bootstrap launcher — a `./build.sh`-style entry point for Deno.
+# Zuke launcher for a build another SDK hosts.
 #
 #   ./zuke               # run the default target
 #   ./zuke <target>      # run one target and its prerequisites
 #   ./zuke --list        # list every target
 #
-# Ensures Deno is available (installing it on first use if missing), then runs
-# the project's build file (zuke.ts). No global install required.
+# Runs zuke 2.4.0, which carries the engine and every tool wrapper, so
+# this project needs nothing installed but its own SDK's tools. On first use
+# it downloads that release, checksum-verified, into ZUKE_INSTALL.
 #
 # Honoured environment variables:
-#   DENO_INSTALL   where Deno is installed/looked for (default: ~/.deno)
-#   DENO_VERSION   which Deno to install on bootstrap. Defaults to a pinned,
-#                  known-good version (see below) for reproducible and more
-#                  predictable installs. An override must name an exact release
-#                  tag (e.g. v2.8.3) — "latest" is rejected, because a moving
-#                  target has no checksum to pin — and is only installed if
-#                  DENO_SHA256 also supplies the matching per-platform checksum
-#                  (see below); this launcher never downloads an unverified
-#                  binary.
-#   DENO_SHA256    required alongside a DENO_VERSION override: the expected
-#                  SHA-256 of the release zip for the *current* platform (see
-#                  the asset name printed on a checksum mismatch).
+#   ZUKE_INSTALL       where zuke releases are kept (default: ~/.zuke)
+#   ZUKE_RELEASES_URL  a mirror of https://github.com/zuke-build/zuke/releases/download;
+#                      what it serves is verified against the pins below
 set -euo pipefail
 
-# Pinned default so the bootstrap installs a known version rather than whatever
-# "latest" happens to be.
-DEFAULT_DENO_VERSION="v2.8.3"
+dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+cd "$dir"
 
-# --- Pinned per-platform checksums for DEFAULT_DENO_VERSION -----------------
-# SHA-256 of each `deno-<target>.zip` release asset, from
-# https://github.com/denoland/deno/releases/tag/v2.8.3 (GitHub's own reported
-# asset `digest`, cross-checked by downloading and hashing the artifact).
-# Bump *together* with DEFAULT_DENO_VERSION: this file is generated from
-# @zuke/cli's deno_pin.ts, so change the pin there and regenerate.
-deno_checksum_for() {
+# The pinned release, and the SHA-256 of each platform's archive, from the
+# SHA256SUMS of https://github.com/zuke-build/zuke/releases/download/cli-v2.4.0.
+# Moved by `zuke upgrade --engine`, which rewrites this file; never hand-edit.
+ZUKE_VERSION="2.4.0"
+zuke_checksum_for() {
   case "$1" in
-    x86_64-unknown-linux-gnu)
-      echo "30455b845ffa6082209c3590269c910ad3b7efdf28c9879afd4006c47ae54197" ;;
-    aarch64-unknown-linux-gnu)
-      echo "d4589cc1ffcbf1995c92a0127d932aaf832ac70cfdcc6d5b7bf38043cf303575" ;;
-    x86_64-apple-darwin)
-      echo "4254ec12123cfcf88b87703d7acf092a1ea024bdf9be8dd3cd9d4474761cb74e" ;;
     aarch64-apple-darwin)
-      echo "88b350be928fdba0e5d8142ff7c101a17133426371e3cf5ed0e0f74e62476f6c" ;;
+      echo "925f71aac4cfe8e7fe3e15266f32732f7fe533d240c30142e3b428116f9afe0c" ;;
+    x86_64-apple-darwin)
+      echo "9f8bea39f96502d3f2987685328c3650273326884c90a74cca90e5b311239dc8" ;;
+    aarch64-unknown-linux-gnu)
+      echo "b62aa9ec9065a6990693448833b169d5ae31894715b737bfdc2521c6fb13315e" ;;
+    x86_64-unknown-linux-gnu)
+      echo "c7fefb3291b1d4bb697b72b832864642f97c142d923d9dd380d73201652595f2" ;;
     *)
       return 1 ;;
   esac
 }
-# -----------------------------------------------------------------------------
 
-dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$dir"
+zuke_install="${ZUKE_INSTALL:-$HOME/.zuke}"
+zuke_bin="$zuke_install/releases/$ZUKE_VERSION/zuke"
 
-deno_install="${DENO_INSTALL:-$HOME/.deno}"
-
-if command -v deno >/dev/null 2>&1; then
-  deno_bin="$(command -v deno)"
-elif [ -x "$deno_install/bin/deno" ]; then
-  deno_bin="$deno_install/bin/deno"
-else
-  echo "zuke: Deno not found — installing it now..." >&2
-  for cmd in curl unzip; do
+if [ ! -x "$zuke_bin" ]; then
+  echo "zuke: zuke $ZUKE_VERSION is not here yet — downloading it..." >&2
+  for cmd in curl tar; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
-      echo "zuke: $cmd is required to bootstrap Deno; install Deno manually:" >&2
-      echo "      https://docs.deno.com/runtime/getting_started/installation/" >&2
+      echo "zuke: $cmd is required to download zuke; install zuke instead:" >&2
+      echo "      https://github.com/zuke-build/zuke/blob/master/docs/install.md" >&2
       exit 1
     fi
   done
 
-  deno_version="${DENO_VERSION:-$DEFAULT_DENO_VERSION}"
-  case "$deno_version" in
-    latest)
-      # There is no `latest` release tag to download, and a moving target has no
-      # checksum to pin — so name the release you want instead.
-      echo "zuke: DENO_VERSION=latest is not supported: this launcher verifies the" >&2
-      echo "      download against a pinned SHA-256, and \"latest\" has no fixed hash." >&2
-      echo "      Set DENO_VERSION to an exact release tag (e.g. v2.8.3) plus DENO_SHA256" >&2
-      echo "      with that release's deno-<target>.zip hash, or unset DENO_VERSION to" >&2
-      echo "      install the verified default $DEFAULT_DENO_VERSION." >&2
-      exit 1
-      ;;
-    v*) ;;
-    *) deno_version="v$deno_version" ;;
-  esac
-
-  # Map uname's OS/arch spelling to Deno's release asset target triple.
+  # Map uname's OS/arch spelling to the release's target triple.
   case "$(uname -s)" in
     Linux) os_part="unknown-linux-gnu" ;;
     Darwin) os_part="apple-darwin" ;;
     *)
-      echo "zuke: unsupported OS for the checksum-verified bootstrap: $(uname -s)." >&2
-      echo "      Install Deno manually: https://docs.deno.com/runtime/getting_started/installation/" >&2
+      echo "zuke: no zuke release is built for $(uname -s); use zuke.ps1 on Windows." >&2
       exit 1
       ;;
   esac
@@ -101,51 +66,33 @@ else
     x86_64 | amd64) arch_part="x86_64" ;;
     arm64 | aarch64) arch_part="aarch64" ;;
     *)
-      echo "zuke: unsupported architecture for the checksum-verified bootstrap: $(uname -m)." >&2
-      echo "      Install Deno manually: https://docs.deno.com/runtime/getting_started/installation/" >&2
+      echo "zuke: no zuke release is built for the $(uname -m) architecture." >&2
       exit 1
       ;;
   esac
   target="${arch_part}-${os_part}"
-
-  if [ "$deno_version" = "$DEFAULT_DENO_VERSION" ]; then
-    expected_sha256="$(deno_checksum_for "$target")" || {
-      echo "zuke: no pinned checksum for $target — this platform isn't covered yet." >&2
-      exit 1
-    }
-  elif [ -n "${DENO_SHA256:-}" ]; then
-    # An explicit override: the caller vouches for this version/platform pair
-    # by supplying its own checksum, so the download is still verified.
-    expected_sha256="$DENO_SHA256"
-  else
-    echo "zuke: DENO_VERSION=$deno_version overrides the pinned $DEFAULT_DENO_VERSION," >&2
-    echo "      but no checksum is pinned for it. Set DENO_SHA256 to the expected" >&2
-    echo "      SHA-256 of deno-$target.zip for that release, or unset DENO_VERSION" >&2
-    echo "      to use the verified default." >&2
+  expected_sha256="$(zuke_checksum_for "$target")" || {
+    echo "zuke: no pinned checksum for $target." >&2
     exit 1
-  fi
+  }
 
-  asset="deno-${target}.zip"
-  download_url="https://github.com/denoland/deno/releases/download/${deno_version}/${asset}"
+  asset="zuke-${ZUKE_VERSION}-${target}.tar.gz"
+  download_url="${ZUKE_RELEASES_URL:-https://github.com/zuke-build/zuke/releases/download}/cli-v${ZUKE_VERSION}/${asset}"
   work_dir="$(mktemp -d)"
   trap 'rm -rf "$work_dir"' EXIT
   archive="$work_dir/$asset"
 
-  # The download fetches over the network, which is occasionally flaky (e.g. a
-  # transient 5xx from the CDN). Retry a few times with backoff so a blip
-  # doesn't fail the whole run.
-  download_deno() {
-    curl -fsSL -o "$archive" "$download_url"
-  }
+  # The network is occasionally flaky (a transient 5xx from the CDN), so a blip
+  # is retried with backoff rather than failing the run.
   attempt=1
   max_attempts=4
-  until download_deno; do
+  until curl -fsSL -o "$archive" "$download_url"; do
     if [ "$attempt" -ge "$max_attempts" ]; then
-      echo "zuke: failed to download Deno after $max_attempts attempts." >&2
+      echo "zuke: failed to download $download_url after $max_attempts attempts." >&2
       exit 1
     fi
     delay=$((attempt * 3))
-    echo "zuke: Deno download failed (attempt $attempt/$max_attempts); retrying in ${delay}s..." >&2
+    echo "zuke: download failed (attempt $attempt/$max_attempts); retrying in ${delay}s..." >&2
     sleep "$delay"
     attempt=$((attempt + 1))
   done
@@ -165,47 +112,20 @@ else
     exit 1
   fi
 
-  mkdir -p "$deno_install/bin"
-  unzip -oq "$archive" -d "$deno_install/bin"
-  chmod +x "$deno_install/bin/deno"
-  deno_bin="$deno_install/bin/deno"
+  tar -xzf "$archive" -C "$work_dir" zuke
+  mkdir -p "$(dirname "$zuke_bin")"
+  # Moved into place in one step, so a run interrupted mid-copy never leaves a
+  # binary behind that later runs would trust without verifying.
+  mv -f "$work_dir/zuke" "$zuke_bin.$$"
+  chmod +x "$zuke_bin.$$"
+  mv -f "$zuke_bin.$$" "$zuke_bin"
+  # Removed now: the exec below replaces this shell, so the trap never fires.
+  rm -rf "$work_dir"
+  trap - EXIT
 fi
 
-# Put this Deno on PATH so CLIs the build provisions with `deno install` — whose
-# generated launchers invoke `deno` by name — can find it even when Deno was
-# bootstrapped to a non-PATH location (e.g. ~/.deno/bin).
-export PATH="$(dirname "$deno_bin"):$PATH"
-
-# No build file: zuke.json describes a build another SDK hosts, run by the
-# @zuke/engine release it names. The lock is named explicitly, since Deno looks
-# for one only beside a Deno config, which such a project has no reason to
-# keep; with no lock there is none to write, so no notice either.
-if [ ! -f zuke.ts ]; then
-  # Read with the Deno just resolved, so the field is parsed as JSON here
-  # exactly as the PowerShell launcher and the zuke command parse it.
-  engine_version="$("$deno_bin" eval 'const c = JSON.parse(Deno.readTextFileSync("zuke.json")); Deno.stdout.writeSync(new TextEncoder().encode(typeof c.engine === "string" ? c.engine : ""))' 2>/dev/null || true)"
-  if [ -z "$engine_version" ]; then
-    echo "zuke: no zuke.ts here, and zuke.json names no 'engine' version to run its 'sdk' build with" >&2
-    exit 1
-  fi
-  engine_version_pattern='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'
-  if ! [[ "$engine_version" =~ $engine_version_pattern ]]; then
-    echo "zuke: zuke.json names 'engine': '$engine_version', which is not an exact version like 1.2.3" >&2
-    exit 1
-  fi
-  if [ -f deno.lock ]; then
-    exec "$deno_bin" run -A --lock=deno.lock --frozen "jsr:@zuke/engine@$engine_version" "$@"
-  fi
-  exec "$deno_bin" run -A "jsr:@zuke/engine@$engine_version" "$@"
-fi
-
-# The first run has no lockfile to verify against, so let Deno write one; from
-# then on --frozen fails the build if the module graph changed. Say so when
-# skipping, so a deleted lockfile downgrades verification visibly instead of
-# silently.
-if [ -f deno.lock ]; then
-  exec "$deno_bin" run -A --frozen zuke.ts "$@"
-else
-  echo "zuke: no deno.lock here yet — running without lockfile verification so Deno can write one." >&2
-  exec "$deno_bin" run -A zuke.ts "$@"
-fi
+# zuke runs the build here itself rather than this launcher again, and does not
+# hold this directory to the trust gate: running the launcher named it.
+export ZUKE_FORWARDED=1
+export ZUKE_LAUNCHER_ROOT="$dir"
+exec "$zuke_bin" "$@"

@@ -45,17 +45,18 @@ main repository's [install guide](https://github.com/zuke-build/zuke/blob/master
 ```sh
 brew install zuke-build/tap/zuke           # macOS, Linux
 choco install zuke                         # Windows
-deno install -A -g -n zuke jsr:@zuke/cli   # any OS, with Deno
 ```
 
-The Homebrew and Chocolatey `zuke` is a standalone binary that carries the
-engine and every tool wrapper inside it, so a Python build needs **no Deno at
-all**: only Python and uv.
+`zuke` is a standalone binary that carries the engine and every tool wrapper
+inside it, so a Python build needs **no Deno, anywhere**: only Python and uv,
+on a laptop or a CI runner. Without either package manager, a project's own
+`./zuke` launcher downloads the binary (see below), or take it from the
+[releases](https://github.com/zuke-build/zuke/releases).
 
 **2. Scaffold a Python project and run it**:
 
 ```sh
-zuke setup --sdk python   # build.py, zuke.json pinning @zuke/engine, the launchers
+zuke setup --sdk python   # build.py, zuke.json, and launchers pinning this zuke
 zuke                      # run the build
 zuke --list               # every target, with its description and dependencies
 ```
@@ -122,26 +123,26 @@ build to an agent as typed tools.
 
 | What                                   | How                                                                                       |
 | -------------------------------------- | ----------------------------------------------------------------------------------------- |
-| The `zuke` CLI                         | `deno install -A -g -n zuke jsr:@zuke/cli`, `brew install zuke-build/tap/zuke`, `choco install zuke` |
+| The `zuke` CLI                         | `brew install zuke-build/tap/zuke`, `choco install zuke`, or a project's launcher        |
 | This package, into an existing project | `uv add --dev zuke`, or `pip install zuke`                                                |
 | A new project                          | `zuke setup --sdk python`, which writes `build.py`, `zuke.json` and the launchers         |
 
-Python 3.12 or newer. The standalone `zuke` binary runs the build on the
-engine compiled into it, with no Deno installed, whenever that engine serves
-the `@zuke/engine` release `zuke.json` pins (the same major version, at the pin
-or newer); `zuke --version` names it. The committed `./zuke` and `zuke.ps1`
-launchers, and a `deno install`ed `zuke`, run the pinned release on Deno
-instead, which the launchers download, pinned and checksum-verified, on first
-use. `zuke upgrade --engine` moves the pin.
+Python 3.12 or newer. The `zuke` binary runs the build on the engine compiled
+into it whenever that engine serves the `@zuke/engine` release `zuke.json` pins
+(the same major version, at the pin or newer); `zuke --version` names it. A pin
+it cannot serve goes to the project's launcher; it never needs Deno.
 
-On a machine without the CLI, such as a CI runner, the launchers run the build
-the same way: `./zuke ci`, or `./zuke.ps1 ci` on Windows. The generated
-workflows call them.
+The committed `./zuke` and `zuke.ps1` launchers pin one `zuke` release and the
+SHA-256 of each platform's archive. On first use they download that release
+from GitHub, verify it and keep it in `~/.zuke`, so a machine without the CLI,
+such as a CI runner, runs the build the same way: `./zuke ci`, or
+`./zuke.ps1 ci` on Windows. The generated workflows call them.
+`zuke upgrade --engine` moves the launchers and the pin to a newer release.
 
 ## How it works
 
 ```
-zuke <target>  ─▶  @zuke/engine (built into the binary, or the pin on Deno)
+zuke <target>  ─▶  @zuke/engine (built into the zuke binary)
                       │  starts the worker zuke.json names: uv run build.py
                       ▼
                    build.py  ◀── JSON-RPC 2.0 over loopback ──▶  engine
@@ -193,9 +194,10 @@ token exists. From 1.0.1, each file also carries a
 [PEP 740](https://peps.python.org/pep-0740/) provenance attestation, signed from
 the release job's identity, which PyPI verifies back to
 `zuke-build/zuke-python`'s `release.yml`; see the **Security** tab of a release
-on [PyPI](https://pypi.org/project/zuke/). Actions are pinned by commit SHA, the
-engine and every wrapper it loads run frozen against the committed `deno.lock`,
-and `uv.lock` locks the development environment. See
+on [PyPI](https://pypi.org/project/zuke/). Actions are pinned by commit SHA,
+the launchers verify the `zuke` binary, which carries the engine and every
+wrapper, against the SHA-256 they pin, and `uv.lock` locks the development
+environment. See
 [`SECURITY.md`](https://github.com/zuke-build/zuke-python/blob/main/SECURITY.md).
 
 ## Documentation
@@ -237,8 +239,8 @@ The gate is itself a Zuke build, `build.py`, run by `@zuke/engine` at the
 version `zuke.json` pins; `./zuke ci` runs the same gate without the CLI, and
 CI runs it on Ubuntu, macOS and Windows. The tool facades are generated from the
 engine's tool spec, vendored under `spec/`, and `facades_check` fails the gate
-when they drift. The engine, every wrapper it imports, and their `@zuke/core`
-run frozen against `deno.lock`; `zuke lock` rewrites it. The same AI reviewers
+when they drift. The engine and every wrapper run from the `zuke` binary the
+launchers pin, checksum-verified. The same AI reviewers
 the main repository runs review this repository's pull requests, from
 `build.py`'s `review` target through `zuke.tools.ai`: the SDK's build is
 reviewed by the SDK. An engine sync, `build.py`'s `sync_engine`, runs whenever
@@ -279,7 +281,8 @@ MIT — see [`LICENSE`](https://github.com/zuke-build/zuke-python/blob/main/LICE
   and **[pyright](https://github.com/microsoft/pyright)** — the toolchain this
   package is built, linted and type-checked with.
 - **[Deno](https://deno.com/)** and **[JSR](https://jsr.io/)**, which the engine
-  runs on and ships from, and **[PyPI](https://pypi.org/)** and the
+  is written for and compiled with into the `zuke` binary, and
+  **[PyPI](https://pypi.org/)** and the
   [PyPA](https://www.pypa.io/), whose trusted publishing and attestations sign
   this package.
 
