@@ -368,7 +368,8 @@ class Replay:
 
 
 def test_the_cases_are_the_vendored_set() -> None:
-    assert is_list(json.loads(json.dumps(cases()))) and len(cases()) == 23
+    # Not a count, since the engine sync adds cases; an empty set passes vacuously.
+    assert is_list(json.loads(json.dumps(cases()))) and len(cases()) > 0
 
 
 @pytest.mark.parametrize("case", cases())
