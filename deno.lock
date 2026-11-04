@@ -31,7 +31,7 @@
     "jsr:@zuke/core@^1.72.0": "1.80.1",
     "jsr:@zuke/core@^1.74.0": "1.80.1",
     "jsr:@zuke/core@^1.75.0": "1.80.1",
-    "jsr:@zuke/core@^1.77.0": "1.80.1",
+    "jsr:@zuke/core@^1.80.0": "1.80.1",
     "jsr:@zuke/cspell@1.2.0": "1.2.0",
     "jsr:@zuke/cypress@1.1.0": "1.1.0",
     "jsr:@zuke/dart@1.0.0": "1.0.0",
@@ -41,7 +41,7 @@
     "jsr:@zuke/docs@1.0.1": "1.0.1",
     "jsr:@zuke/dpdm@1.1.0": "1.1.0",
     "jsr:@zuke/dprint@1.1.0": "1.1.0",
-    "jsr:@zuke/engine@1.2.0": "1.2.0",
+    "jsr:@zuke/engine@1.3.0": "1.3.0",
     "jsr:@zuke/eslint@1.1.0": "1.1.0",
     "jsr:@zuke/flutter@1.0.0": "1.0.0",
     "jsr:@zuke/gcloud@1.4.2": "1.4.2",
@@ -227,10 +227,10 @@
         "jsr:@zuke/core@^1.44.0"
       ]
     },
-    "@zuke/engine@1.2.0": {
-      "integrity": "e30f2ab16d55a93b0c5fcf1d8459b3c53115ac855e42671f5066ed53a22bcb94",
+    "@zuke/engine@1.3.0": {
+      "integrity": "aecc48ade6b970cd3adb1b2618630b8ee1c12ce7fdd4253e195c606dc8f7cb9c",
       "dependencies": [
-        "jsr:@zuke/core@^1.77.0"
+        "jsr:@zuke/core@^1.80.0"
       ]
     },
     "@zuke/eslint@1.1.0": {

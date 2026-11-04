@@ -1,5 +1,6 @@
 {
-  "tag": "engine-v1.2.2",
+  "tag": "cli-v2.3.0",
+  "engine": "1.3.0",
   "versions": {
     "deno": "1.5.0",
     "docs": "1.0.1",
