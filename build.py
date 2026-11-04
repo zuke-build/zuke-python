@@ -1087,9 +1087,11 @@ class Zuke(Build):
         .pipeline(
             {
                 "name": "Engine sync",
-                # Daily, off the hour, and on demand. The App token the target
-                # mints does the writes, so the job's own token only reads.
-                "triggers": {"schedule": [{"cron": "17 5 * * *"}], "manual": True},
+                # On dispatch only: the engine repository's release pipeline
+                # starts it once a CLI release is published, and it can be run
+                # by hand. The App token the target mints does the writes, so
+                # the job's own token only reads.
+                "triggers": {"manual": True},
                 "concurrency": {"group": "engine-sync", "cancelInProgress": False},
                 "harden": {"egress": "audit"},
             }

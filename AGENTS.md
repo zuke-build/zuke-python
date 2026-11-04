@@ -176,7 +176,7 @@ Name every test module `test_*.py`; pytest discovers nothing else.
 | Regenerate `uv.lock`        | `uv lock`                                                  |
 | Regenerate `deno.lock`      | `./zuke lock` (`vendor_spec` relocks; `lock_check` is in the gate) |
 | Publish a cut release       | `./zuke publish` (the `release` workflow runs it on `main`) |
-| Sync with the engine        | `./zuke sync_engine` (the daily `sync` workflow runs it; the pull request needs the App credentials) |
+| Sync with the engine        | `./zuke sync_engine` (the `sync` workflow runs it when the engine repository publishes a CLI release; the pull request needs the App credentials) |
 | Generate the API reference  | `./zuke api_reference` (writes `.zuke/api.json`)          |
 | Sync it to the website      | `./zuke sync_website` (the `release` workflow runs it after `publish`; skipped without the App credentials or `WEBSITE_SYNC_TOKEN`) |
 
@@ -198,7 +198,10 @@ generated the same way from its `ai_review` field,
 `.github/workflows/release.yml` from its `release_workflow` field, and
 `.github/workflows/sync.yml` from its `sync_workflow` field.
 
-**Following the engine.** `sync_engine` runs daily and on demand. It finds the
+**Following the engine.** `sync_engine` runs when the engine repository
+publishes a CLI release: that repository's release pipeline dispatches the
+`sync` workflow, with a `zuke-build` App token scoped to this repository's
+actions, and it can be started by hand from the Actions tab. It finds the
 engine repository's newest `cli-v*` tag, the commit the `zuke` binary of that
 release is compiled from, and does nothing when `spec/engine.json` and the
 cases' `VERSION` already name it. Otherwise it vendors that tag's cases, tool
@@ -227,7 +230,7 @@ tests/                    # pytest suite; protocol/ replays the engine's conform
 .github/workflows/ci.yml  # the gate on ubuntu, macOS and Windows, generated from build.py
 .github/workflows/ai-review.yml  # the AI review on pull requests and on command, generated from build.py
 .github/workflows/release.yml    # release-please and the PyPI publish on main, generated from build.py
-.github/workflows/sync.yml       # the daily engine sync's pull request, generated from build.py
+.github/workflows/sync.yml       # the engine sync the engine's CLI release dispatches, generated from build.py
 .release-please-config.json, .release-please-manifest.json  # the release configuration and the last released version
 .github/ISSUE_TEMPLATE/   # feature, bug and chore templates; blank issues are off
 AGENTS.md                 # this file; CLAUDE.md points here

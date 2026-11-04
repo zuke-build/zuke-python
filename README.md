@@ -241,8 +241,9 @@ when they drift. The engine, every wrapper it imports, and their `@zuke/core`
 run frozen against `deno.lock`; `zuke lock` rewrites it. The same AI reviewers
 the main repository runs review this repository's pull requests, from
 `build.py`'s `review` target through `zuke.tools.ai`: the SDK's build is
-reviewed by the SDK. A daily engine sync, `build.py`'s `sync_engine`, follows
-the engine's newest CLI release, which is what the binary carries: it vendors
+reviewed by the SDK. An engine sync, `build.py`'s `sync_engine`, runs whenever
+the engine repository publishes a CLI release, which is what the binary
+carries: it vendors
 that commit's tool spec, wrapper versions and conformance cases, pins its
 engine, regenerates the facades and the lock, and opens one standing pull
 request, with an issue, whose gate shows whether the SDK needs work for it.
