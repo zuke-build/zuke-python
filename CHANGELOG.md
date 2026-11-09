@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.1](https://github.com/zuke-build/zuke-python/compare/zuke-v1.3.0...zuke-v1.3.1) (2026-11-09)
+
+
+### Bug Fixes
+
+* treat empty App credentials as missing so the AI review passes on Dependabot pull requests ([#55](https://github.com/zuke-build/zuke-python/issues/55)) ([fde7b04](https://github.com/zuke-build/zuke-python/commit/fde7b0414146c6a1f456135c0acdf4fba5e8e5ae))
+
 ## [1.3.0](https://github.com/zuke-build/zuke-python/compare/zuke-v1.2.0...zuke-v1.3.0) (2026-11-04)
 
 
