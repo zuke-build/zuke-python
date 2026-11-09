@@ -432,7 +432,12 @@ async def test_the_review_posts_as_the_app_when_its_credentials_are_set() -> Non
         assert is_list(setters) and ["commentToken", ["ghs_app"]] in setters
 
 
-async def test_the_review_posts_with_the_actions_token_without_the_app() -> None:
+@pytest.mark.parametrize(
+    "parameters", [{"app_id": "42"}, {"app_id": "", "app_key": ""}]
+)
+async def test_the_review_posts_with_the_actions_token_without_the_app(
+    parameters: dict[str, str],
+) -> None:
     calls: list[object] = []
 
     async def tool_call(params: object) -> object:
@@ -442,8 +447,8 @@ async def test_the_review_posts_with_the_actions_token_without_the_app() -> None
     peer: Peer
     async with served(Zuke()) as peer:
         peer.on("tool.call", tool_call)
-        # The id alone is not enough: the key is the credential.
-        await peer.request("build.configure", {"parameters": {"app_id": "42"}})
+        # The id alone is not enough, and a Dependabot run's empty ones are unset.
+        await peer.request("build.configure", {"parameters": parameters})
         params = {"target": "review", "runId": "r1", "dryRun": False}
         assert await asyncio.wait_for(peer.request("target.run", params), 10) is None
     [review] = calls
