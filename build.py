@@ -301,11 +301,11 @@ async def app_token(ctx: Context, repository: str, *write: str) -> str | None:
     """A ``zuke-build`` App installation token, when its credentials are set.
 
     The token is narrowed to one ``zuke-build`` repository and write access to
-    the ``write`` permissions. Without the credentials, as locally and on a
-    fork, there is none.
+    the ``write`` permissions. Without the credentials, or with empty ones as on
+    a fork or a Dependabot run, there is none.
     """
     app, key = Zuke.app_id.value, Zuke.app_key.value
-    if app is None or key is None:
+    if not app or not key:
         return None
 
     def scoped(s: GhAppTokenSettings) -> GhAppTokenSettings:
@@ -841,10 +841,13 @@ class Zuke(Build):
                 "id": "review",
                 "name": "AI review",
                 "permissions": {"contents": "read", "pull-requests": "write"},
+                # Dependabot runs get no Actions secrets; a maintainer can still
+                # comment `@zuke-build review`.
                 "if": (
                     "${{ github.event_name == 'pull_request' && "
                     "github.event.pull_request.head.repo.full_name == "
-                    "github.repository }}"
+                    "github.repository && "
+                    "github.event.pull_request.user.login != 'dependabot[bot]' }}"
                 ),
                 "timeoutMinutes": 15,
                 "steps": [
