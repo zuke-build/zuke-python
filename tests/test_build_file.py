@@ -224,7 +224,6 @@ def test_the_ai_review_workflow_runs_on_pull_requests_and_on_command() -> None:
     assert [push["target"], command["target"]] == ["review", "review"]
     assert [push["id"], command["id"]] == ["review", "commandReview"]
     assert "github.event_name == 'pull_request'" in str(push["if"])
-    assert "!= 'dependabot[bot]'" in str(push["if"])
     assert "@zuke-build review" in str(command["if"])
     steps = command["steps"]
     assert is_list(steps) and len(steps) == 4

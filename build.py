@@ -841,13 +841,10 @@ class Zuke(Build):
                 "id": "review",
                 "name": "AI review",
                 "permissions": {"contents": "read", "pull-requests": "write"},
-                # Dependabot runs get no Actions secrets; a maintainer can still
-                # comment `@zuke-build review`.
                 "if": (
                     "${{ github.event_name == 'pull_request' && "
                     "github.event.pull_request.head.repo.full_name == "
-                    "github.repository && "
-                    "github.event.pull_request.user.login != 'dependabot[bot]' }}"
+                    "github.repository }}"
                 ),
                 "timeoutMinutes": 15,
                 "steps": [
