@@ -20,13 +20,13 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Harden and check out with Zuke
-        uses: zuke-build/zuke@b0832247daa16321be405a10b71c022317d2c5a4 # v1.0.8
+        uses: zuke-build/zuke@517dc954200eae7c54125406675c329fa8cfb811 # v1.0.9
         with:
           egress-policy: audit
           persist-credentials: "false"
       - name: Maintain the release PR and cut the release
         id: release
-        uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4.4.1
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
           config-file: .release-please-config.json
           manifest-file: .release-please-manifest.json
