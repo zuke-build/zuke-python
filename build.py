@@ -79,8 +79,8 @@ ATTESTATIONS = "pypi-attestations==0.0.31"
 """The PyPA tool that signs a distribution's PEP 740 provenance, pinned."""
 PINS = {
     "zuke-build/zuke": {
-        "ref": "zuke-build/zuke@b0832247daa16321be405a10b71c022317d2c5a4",
-        "version": "v1.0.8",
+        "ref": "zuke-build/zuke@517dc954200eae7c54125406675c329fa8cfb811",
+        "version": "v1.0.9",
     },
     "step-security/harden-runner": {
         "ref": "step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43",
@@ -92,8 +92,8 @@ PINS = {
     },
     "googleapis/release-please-action": {
         "ref": "googleapis/release-please-action"
-        "@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071",
-        "version": "v4.4.1",
+        "@45996ed1f6d02564a971a2fa1b5860e934307cf7",
+        "version": "v5.0.0",
     },
 }
 """The pinned actions the workflow uses: the Zuke prelude, and what it is made of."""
