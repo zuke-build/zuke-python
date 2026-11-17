@@ -273,7 +273,7 @@ def reviewer(s: Reviewer, token: str | None) -> Reviewer:
     with ``token`` when there is one, and with ``GITHUB_TOKEN`` otherwise.
     """
     key = Zuke.openai_key.value
-    s = s.provider("openai").skip_if_key_missing()
+    s = s.provider("openai").model("gpt-6.1-sol").skip_if_key_missing()
     if key is not None:
         s = s.api_key(key)
     if token is not None:

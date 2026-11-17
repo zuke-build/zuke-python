@@ -361,6 +361,7 @@ async def test_review_base_fetches_main_and_the_review_calls_the_reviewers(
     names = [call[0] for call in setters if is_list(call)]
     assert names == [
         "provider",
+        "model",
         "skipIfKeyMissing",
         "apiKey",
         "comment",
@@ -373,9 +374,10 @@ async def test_review_base_fetches_main_and_the_review_calls_the_reviewers(
         "onError",
         "fileContext",
     ]
-    assert setters[2] == ["apiKey", ["sk"]]
-    assert setters[4] == ["diff", [{"configure": [["base", ["origin/main"]]]}]]
-    assert setters[9] == ["failWhen", [{"configure": [["scoreAbove", [5]]]}]]
+    assert setters[1] == ["model", ["gpt-6.1-sol"]]
+    assert setters[3] == ["apiKey", ["sk"]]
+    assert setters[5] == ["diff", [{"configure": [["base", ["origin/main"]]]}]]
+    assert setters[10] == ["failWhen", [{"configure": [["scoreAbove", [5]]]}]]
 
 
 async def test_the_review_leaves_the_key_out_when_the_parameter_is_unset() -> None:
