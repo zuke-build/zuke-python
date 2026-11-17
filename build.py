@@ -290,6 +290,21 @@ def reviewer(s: Reviewer, token: str | None) -> Reviewer:
     )
 
 
+def review_concurrency(*, cancel: bool) -> dict[str, object]:
+    """The one group per pull request both AI review jobs share.
+
+    Shared because each run reads the reviewer's state from its comment and
+    writes it back, so two runs at once would drop what the earlier one
+    recorded. It sits on the jobs, not the workflow: a job its ``if`` skips
+    never enters it, so a comment that starts no review cancels nothing.
+    """
+    return {
+        "group": "ai-review-${{ github.workflow }}-"
+        "${{ github.event.pull_request.number || github.event.issue.number }}",
+        "cancelInProgress": cancel,
+    }
+
+
 def reviewers(r: ReviewSettings, token: str | None = None) -> ReviewSettings:
     """The two reviewers this repository's pull requests get: security, then quality."""
     return r.security(lambda s: reviewer(s, token).file_context()).generic(
@@ -825,67 +840,68 @@ class Zuke(Build):
             {
                 "name": "AI Review",
                 "triggers": {"pullRequest": [], "issueComment": ["created"]},
-                # One group per pull request, whichever event started the
-                # run, so a push supersedes the review of the one before it.
-                "concurrency": {
-                    "group": "ai-review-${{ github.event.pull_request.number "
-                    "|| github.event.issue.number }}",
-                    "cancelInProgress": True,
-                },
+                # No workflow-level concurrency: a comment run whose jobs are
+                # all skipped, such as the one the reviewer's own comment
+                # starts, would still enter that group and cancel the review.
                 "harden": {"egress": "block", "allowedEndpoints": ENDPOINTS},
+                "jobs": [
+                    {
+                        "id": "review",
+                        "name": "AI review",
+                        "permissions": {"contents": "read", "pull-requests": "write"},
+                        "if": (
+                            "${{ github.event_name == 'pull_request' && "
+                            "github.event.pull_request.head.repo.full_name == "
+                            "github.repository }}"
+                        ),
+                        "timeoutMinutes": 15,
+                        # A push supersedes the review of the head before it.
+                        "concurrency": review_concurrency(cancel=True),
+                        "steps": [
+                            *UV_STEPS,
+                            {
+                                "name": "AI review with Zuke",
+                                "run": "./zuke review",
+                                "env": REVIEW_SECRETS,
+                            },
+                        ],
+                    },
+                    {
+                        "id": "commandReview",
+                        "name": "AI review on command",
+                        "permissions": {"contents": "read", "pull-requests": "write"},
+                        "if": (
+                            "${{ github.event_name == 'issue_comment' && "
+                            "github.event.issue.pull_request && "
+                            "github.event.comment.user.type != 'Bot' && "
+                            "(startsWith(github.event.comment.body, "
+                            "'@zuke-build review') || "
+                            "startsWith(github.event.comment.body, "
+                            "'@zuke-build accept')) }}"
+                        ),
+                        "timeoutMinutes": 15,
+                        # A command queues behind a running review, so it starts from
+                        # the state that review posted.
+                        "concurrency": review_concurrency(cancel=False),
+                        "steps": [
+                            *UV_STEPS,
+                            {
+                                "name": "Check the commenter may start a review",
+                                "id": "callers",
+                                "run": "./zuke review_preflight",
+                                "env": COMMAND_ENV,
+                                "continueOnError": True,
+                            },
+                            {
+                                "name": "AI review with Zuke",
+                                "if": "steps.callers.outcome == 'success'",
+                                "run": "./zuke review",
+                                "env": {**REVIEW_SECRETS, **COMMAND_ENV},
+                            },
+                        ],
+                    },
+                ],
             }
-        )
-        .invokes(
-            {
-                "target": review,
-                "id": "review",
-                "name": "AI review",
-                "permissions": {"contents": "read", "pull-requests": "write"},
-                "if": (
-                    "${{ github.event_name == 'pull_request' && "
-                    "github.event.pull_request.head.repo.full_name == "
-                    "github.repository }}"
-                ),
-                "timeoutMinutes": 15,
-                "steps": [
-                    *UV_STEPS,
-                    {
-                        "name": "AI review with Zuke",
-                        "run": "./zuke review",
-                        "env": REVIEW_SECRETS,
-                    },
-                ],
-            },
-            {
-                "target": review,
-                "id": "commandReview",
-                "name": "AI review on command",
-                "permissions": {"contents": "read", "pull-requests": "write"},
-                "if": (
-                    "${{ github.event_name == 'issue_comment' && "
-                    "github.event.issue.pull_request && "
-                    "github.event.comment.user.type != 'Bot' && "
-                    "(startsWith(github.event.comment.body, '@zuke-build review') || "
-                    "startsWith(github.event.comment.body, '@zuke-build accept')) }}"
-                ),
-                "timeoutMinutes": 15,
-                "steps": [
-                    *UV_STEPS,
-                    {
-                        "name": "Check the commenter may start a review",
-                        "id": "callers",
-                        "run": "./zuke review_preflight",
-                        "env": COMMAND_ENV,
-                        "continueOnError": True,
-                    },
-                    {
-                        "name": "AI review with Zuke",
-                        "if": "steps.callers.outcome == 'success'",
-                        "run": "./zuke review",
-                        "env": {**REVIEW_SECRETS, **COMMAND_ENV},
-                    },
-                ],
-            },
         )
         .pins(PINS)
     )

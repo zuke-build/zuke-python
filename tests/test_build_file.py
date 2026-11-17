@@ -215,14 +215,23 @@ def test_the_ai_review_workflow_runs_on_pull_requests_and_on_command() -> None:
     declared = Zuke.ai_review.manifest()
     assert declared["path"] == ".github/workflows/ai-review.yml"
     pipeline = declared["pipeline"]
-    assert isinstance(pipeline, dict)
+    assert is_record(pipeline)
     assert pipeline["triggers"] == {"pullRequest": [], "issueComment": ["created"]}
-    invokes = declared["invokes"]
-    assert is_list(invokes) and len(invokes) == 2
-    push, command = invokes
+    # Each job carries the concurrency group, never the workflow: a comment
+    # run whose jobs are all skipped must not cancel a review in flight.
+    assert "concurrency" not in pipeline
+    jobs = pipeline["jobs"]
+    assert is_list(jobs) and len(jobs) == 2
+    push, command = jobs
     assert is_record(push) and is_record(command)
-    assert [push["target"], command["target"]] == ["review", "review"]
     assert [push["id"], command["id"]] == ["review", "commandReview"]
+    push_group, command_group = push["concurrency"], command["concurrency"]
+    assert is_record(push_group) and is_record(command_group)
+    assert push_group["group"] == command_group["group"]
+    assert [push_group["cancelInProgress"], command_group["cancelInProgress"]] == [
+        True,
+        False,
+    ]
     assert "github.event_name == 'pull_request'" in str(push["if"])
     assert "@zuke-build review" in str(command["if"])
     steps = command["steps"]
