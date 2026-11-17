@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.1](https://github.com/zuke-build/zuke-python/compare/zuke-v1.3.0...zuke-v1.3.1) (2026-11-17)
+
+
+### Bug Fixes
+
+* keep a comment from cancelling the AI review of a pull request ([#61](https://github.com/zuke-build/zuke-python/issues/61)) ([4380367](https://github.com/zuke-build/zuke-python/commit/43803678a78931cdde260aba22a55164dedac721))
+
 ## [1.3.0](https://github.com/zuke-build/zuke-python/compare/zuke-v1.2.0...zuke-v1.3.0) (2026-11-04)
 
 
