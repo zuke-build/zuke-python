@@ -8,7 +8,7 @@
 #   .\zuke.ps1 <target>      # run one target and its prerequisites
 #   .\zuke.ps1 --list        # list every target
 #
-# Runs zuke 2.4.0, which carries the engine and every tool wrapper, so
+# Runs zuke 2.6.0, which carries the engine and every tool wrapper, so
 # this project needs nothing installed but its own SDK's tools. On first use
 # it downloads that release, checksum-verified, into ZUKE_INSTALL.
 #
@@ -23,10 +23,10 @@ $dir = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $dir
 
 # The pinned release, and the SHA-256 of its Windows archive, from the
-# SHA256SUMS of https://github.com/zuke-build/zuke/releases/download/cli-v2.4.0.
+# SHA256SUMS of https://github.com/zuke-build/zuke/releases/download/cli-v2.6.0.
 # Moved by `zuke upgrade --engine`, which rewrites this file; never hand-edit.
-$ZukeVersion = "2.4.0"
-$ZukeSha256 = "ba9b52b5c5ca7ceed1f983d1ff5a7b6b13d8fe6ee0da37a72e7bb351aacf8a2d"
+$ZukeVersion = "2.6.0"
+$ZukeSha256 = "c3e098786c9929b7f6437e3c645846c0d7dd818f7ee92a2857f1095a72e2678c"
 
 if ($PSVersionTable.PSEdition -eq "Core" -and -not $IsWindows) {
   throw "zuke: zuke.ps1 runs the Windows release; on this OS run ./zuke instead."
