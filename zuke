@@ -8,7 +8,7 @@
 #   ./zuke <target>      # run one target and its prerequisites
 #   ./zuke --list        # list every target
 #
-# Runs zuke 2.4.0, which carries the engine and every tool wrapper, so
+# Runs zuke 2.7.0, which carries the engine and every tool wrapper, so
 # this project needs nothing installed but its own SDK's tools. On first use
 # it downloads that release, checksum-verified, into ZUKE_INSTALL.
 #
@@ -22,19 +22,19 @@ dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 cd "$dir"
 
 # The pinned release, and the SHA-256 of each platform's archive, from the
-# SHA256SUMS of https://github.com/zuke-build/zuke/releases/download/cli-v2.4.0.
+# SHA256SUMS of https://github.com/zuke-build/zuke/releases/download/cli-v2.7.0.
 # Moved by `zuke upgrade --engine`, which rewrites this file; never hand-edit.
-ZUKE_VERSION="2.4.0"
+ZUKE_VERSION="2.7.0"
 zuke_checksum_for() {
   case "$1" in
     aarch64-apple-darwin)
-      echo "925f71aac4cfe8e7fe3e15266f32732f7fe533d240c30142e3b428116f9afe0c" ;;
+      echo "c9c0fc2c50adab0db8fdf55dd4505acd0b35bf03b008035bc4bf0b35025ea4cd" ;;
     x86_64-apple-darwin)
-      echo "9f8bea39f96502d3f2987685328c3650273326884c90a74cca90e5b311239dc8" ;;
+      echo "195f28b7c13f1613989e1b7590a182c381748007ca2fd0800365240528a07003" ;;
     aarch64-unknown-linux-gnu)
-      echo "b62aa9ec9065a6990693448833b169d5ae31894715b737bfdc2521c6fb13315e" ;;
+      echo "e679ea4eea3ccd5fcd43950644118034855a8edbe53d0445cd01d2c0281b3087" ;;
     x86_64-unknown-linux-gnu)
-      echo "c7fefb3291b1d4bb697b72b832864642f97c142d923d9dd380d73201652595f2" ;;
+      echo "729d98af7015191c6aa2d5a2cdb25aaba38545b52675b4cd5e00f4ec7d373700" ;;
     *)
       return 1 ;;
   esac
