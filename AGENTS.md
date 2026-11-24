@@ -196,7 +196,11 @@ generated from `build.py`'s `ci_workflow` field: edit the field, run
 `./zuke generate-ci`, and commit both; `.github/workflows/ai-review.yml` is
 generated the same way from its `ai_review` field,
 `.github/workflows/release.yml` from its `release_workflow` field, and
-`.github/workflows/sync.yml` from its `sync_workflow` field.
+`.github/workflows/sync.yml` from its `sync_workflow` field. The
+pins of the actions those workflows name, `zuke-build/zuke` and
+`release-please-action`, are read back from the committed workflows
+(`workflow_pin`), so a Dependabot bump of a `uses:` line regenerates to
+itself and needs no edit to `build.py`.
 
 **Following the engine.** `sync_engine` runs when the engine repository
 publishes a CLI release: that repository's release pipeline dispatches the

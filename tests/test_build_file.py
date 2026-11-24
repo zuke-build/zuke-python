@@ -904,3 +904,26 @@ async def test_sync_engine_proposes_nothing_without_changes_or_credentials(
     assert gh_commands(calls) == []
     assert all(c["task"] != "push" for c in calls)
     assert "no App credentials, so no pull request" in str(logged)
+
+
+SHA = "b2d0b02b0613505f06e125a600ec6cea4ca8fc7b"
+
+
+def test_a_pin_is_read_back_from_the_workflows_dependabot_bumps(tmp_path: Path) -> None:
+    for name in ("ci.yml", "sync.yml"):
+        (tmp_path / name).write_text(f"      - uses: zuke-build/zuke@{SHA} # v1.0.10\n")
+    assert build.workflow_pin("zuke-build/zuke", tmp_path) == {
+        "ref": f"zuke-build/zuke@{SHA}",
+        "version": "v1.0.10",
+    }
+    assert build.PINS["zuke-build/zuke"] == build.workflow_pin("zuke-build/zuke")
+
+
+def test_a_pin_the_workflows_lack_or_disagree_on_is_refused(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="found none"):
+        build.workflow_pin("zuke-build/zuke", tmp_path)
+    (tmp_path / "ci.yml").write_text(f"uses: zuke-build/zuke@{SHA} # v1.0.10\n")
+    (tmp_path / "sync.yml").write_text(f"uses: zuke-build/zuke@{'0' * 40} # v1.0.9\n")
+    with pytest.raises(ValueError, match=r"v1\.0\.10") as raised:
+        build.workflow_pin("zuke-build/zuke", tmp_path)
+    assert "v1.0.9" in str(raised.value)
