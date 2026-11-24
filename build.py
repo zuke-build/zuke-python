@@ -77,11 +77,38 @@ DIST = Path(__file__).parent / "dist"
 """Where uv build writes the sdist and the wheel, and their attestations go."""
 ATTESTATIONS = "pypi-attestations==0.0.31"
 """The PyPA tool that signs a distribution's PEP 740 provenance, pinned."""
+WORKFLOWS = Path(__file__).parent / ".github" / "workflows"
+"""The generated workflows, whose ``uses:`` lines Dependabot bumps."""
+
+
+def workflow_pin(action: str, workflows: Path = WORKFLOWS) -> dict[str, str]:
+    """The pin of ``action`` the committed workflows use, read back from them.
+
+    Dependabot bumps a ``uses:`` line and its version comment, never
+    ``build.py``, so the workflows are where such a pin lives: reading it back
+    makes a bump regenerate to exactly what Dependabot wrote, and
+    ``generate-ci --check`` stays green with no hand edit. Fails when no
+    workflow uses the action, or two disagree.
+    """
+    line = re.compile(rf"uses: ({re.escape(action)}@[0-9a-f]{{40}}) # (\S+)")
+    found = {
+        (m[1], m[2])
+        for f in sorted(workflows.glob("*.yml"))
+        for m in line.finditer(f.read_text())
+    }
+    if len(found) != 1:
+        shown = ", ".join(sorted(f"{r} # {v}" for r, v in found)) or "none"
+        message = (
+            f"{workflows} must pin {action} once, by SHA with a version comment; "
+            f"found {shown}"
+        )
+        raise ValueError(message)
+    ref, version = found.pop()
+    return {"ref": ref, "version": version}
+
+
 PINS = {
-    "zuke-build/zuke": {
-        "ref": "zuke-build/zuke@517dc954200eae7c54125406675c329fa8cfb811",
-        "version": "v1.0.9",
-    },
+    "zuke-build/zuke": workflow_pin("zuke-build/zuke"),
     "step-security/harden-runner": {
         "ref": "step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43",
         "version": "v2.22.3",
@@ -90,11 +117,9 @@ PINS = {
         "ref": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
         "version": "v7.0.1",
     },
-    "googleapis/release-please-action": {
-        "ref": "googleapis/release-please-action"
-        "@45996ed1f6d02564a971a2fa1b5860e934307cf7",
-        "version": "v5.0.0",
-    },
+    "googleapis/release-please-action": workflow_pin(
+        "googleapis/release-please-action"
+    ),
 }
 """The pinned actions the workflow uses: the Zuke prelude, and what it is made of."""
 RUNNERS = ["ubuntu-latest", "macos-latest", "windows-latest"]
