@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.0](https://github.com/zuke-build/zuke-python/compare/zuke-v1.5.0...zuke-v1.6.0) (2026-11-28)
+
+
+### Features
+
+* sync with the engine at cli-v2.10.0 ([#78](https://github.com/zuke-build/zuke-python/issues/78)) ([f690ccb](https://github.com/zuke-build/zuke-python/commit/f690ccb09435a9bb01027613b576790a1f13744e))
+
 ## [1.5.0](https://github.com/zuke-build/zuke-python/compare/zuke-v1.4.0...zuke-v1.5.0) (2026-11-27)
 
 
